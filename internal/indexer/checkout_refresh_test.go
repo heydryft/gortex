@@ -420,6 +420,35 @@ func TestCheckoutMutationConcurrentAdmissionIsBoundedByCaller(t *testing.T) {
 	}
 }
 
+// A caller deadline that runs out during any admission stage, not only while
+// waiting for the cycle lock, is the caller's budget ending: it must keep both
+// the busy (retry) identity and the deadline identity. Catalog reads before
+// the wait and inside the lock-free pre-check used to return a bare deadline,
+// which is how the bounded-admission test above flaked on a loaded runner.
+func TestCheckoutMutationAdmissionDeadlineInAnyStageIsBusy(t *testing.T) {
+	f, c, l := newCheckoutMutationFixture(t)
+	m, err := l.BeginCheckoutMutation(t.Context(), f.checkoutID, f.worktree, f.route().RouteEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	expired, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer cancel()
+	check := func(stage string, err error) {
+		t.Helper()
+		if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, ErrCheckoutMutationBusy) || errors.Is(err, ErrCheckoutMutationStale) {
+			t.Fatalf("%s: spent caller deadline was not reported as busy: %v", stage, err)
+		}
+	}
+	other, err := l.BeginCheckoutMutation(expired, f.checkoutID, f.worktree, f.route().RouteEpoch)
+	if other != nil {
+		other.Close()
+		t.Fatal("admitted concurrent source mutation")
+	}
+	check("admission", err)
+	check("snapshot pre-check", c.refuseStaleAdmission(expired, f.route().RouteEpoch))
+}
+
 func BenchmarkCheckoutRefreshAdmission(b *testing.B) {
 	f, c, l := newCheckoutMutationFixture(b)
 	checkout, _, err := l.catalog.GetCheckout(context.Background(), f.checkoutID)

@@ -24,8 +24,9 @@ var ErrCheckoutMutationPending = errors.New("indexer: checkout mutation refresh 
 
 // ErrCheckoutMutationBusy reports work that ran out of the caller's budget or
 // found a queue full, with the stage named. At admission, before source is
-// written, that is this checkout's cycle lock or the lock-free snapshot
-// pre-check that runs while the lock is held; in the synchronous Refresh,
+// written, that is this checkout's cycle lock, the lock-free snapshot
+// pre-check that runs while the lock is held, or a catalog read before or
+// after either (a deadline lands wherever scheduling puts it); in the synchronous Refresh,
 // after the disk commit, it is the shared build lane. Retry once the active
 // work releases what it holds; no primary fallback writes. A Refresh that
 // gave up leaves its withdrawn route for Close to reschedule.
@@ -72,13 +73,18 @@ type CheckoutMutation struct {
 // say), but not behind another checkout's. A tree the coordinator is rebuilding
 // for is refused as stale before any wait, and a checkout being rehomed has no
 // coordinator registered, so that is refused at once as well.
-func (l *CheckoutLifecycle) BeginCheckoutMutation(ctx context.Context, checkoutID, expectedRoot string, expectedRouteEpoch int64) (*CheckoutMutation, error) {
+func (l *CheckoutLifecycle) BeginCheckoutMutation(ctx context.Context, checkoutID, expectedRoot string, expectedRouteEpoch int64) (_ *CheckoutMutation, err error) {
 	if l == nil || l.catalog == nil || checkoutID == "" || expectedRoot == "" || expectedRouteEpoch <= 0 {
 		return nil, fmt.Errorf("%w: exact checkout identity and route epoch are required", ErrCheckoutMutationStale)
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// The caller's deadline bounds every stage, so it may run out in any of
+	// them. Classify against ctx, not waitCtx: this runs after waitCtx's own
+	// cancel, and coordinator shutdown is not the caller's budget.
+	stage := "checkout lookup"
+	defer func() { err = checkoutAdmissionBudgetError(ctx, stage, err) }()
 	checkout, found, err := l.catalog.GetCheckout(ctx, checkoutID)
 	if err != nil {
 		return nil, err
@@ -132,6 +138,7 @@ func (l *CheckoutLifecycle) BeginCheckoutMutation(ctx context.Context, checkoutI
 			c.cycleMu.Unlock()
 		}
 	}()
+	stage = "checkout validation"
 	m := &CheckoutMutation{coordinator: c, checkout: checkout, rootInfo: rootInfo}
 	if err := m.validateCheckout(waitCtx); err != nil {
 		return nil, err
@@ -347,7 +354,8 @@ func (c *CheckoutCoordinator) checkRoutedSnapshot(ctx context.Context, route sto
 // without holding the cycle lock, so a stale tree is refused at once instead
 // of after the coordinator's queued build. A route that is not active at the
 // expected epoch is the same refusal the locked check would give.
-func (c *CheckoutCoordinator) refuseStaleAdmission(ctx context.Context, expectedRouteEpoch int64) error {
+func (c *CheckoutCoordinator) refuseStaleAdmission(ctx context.Context, expectedRouteEpoch int64) (err error) {
+	defer func() { err = checkoutAdmissionBudgetError(ctx, "checkout snapshot pre-check", err) }()
 	route, found, err := c.catalog.GetCheckoutRoute(ctx, c.checkoutID)
 	if err != nil {
 		return err
@@ -358,14 +366,36 @@ func (c *CheckoutCoordinator) refuseStaleAdmission(ctx context.Context, expected
 	sample, err := c.sampler.Sample(ctx)
 	if err != nil {
 		// A deadline that runs out inside the git call is the caller's
-		// budget ending during admission, not a stale tree: report it the way
-		// a wait for the lock reports it, stage included.
+		// budget ending during admission, not a stale tree; the deferred
+		// classification reports it the way a wait for the lock does.
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return checkoutMutationAdmissionError(ctx, "checkout snapshot pre-check", ctxErr)
+			return fmt.Errorf("%w: sample checkout: %w", ctxErr, err)
 		}
 		return fmt.Errorf("%w: sample checkout: %w", ErrCheckoutMutationStale, err)
 	}
 	return c.checkRoutedSnapshot(ctx, route, sample)
+}
+
+// checkoutAdmissionBudgetError classifies an admission failure that happened
+// after the caller's context ended. Every admission stage that reads the
+// catalog or samples git is bounded by that context, so a deadline can run out
+// in any of them, not only while waiting for the cycle lock; which stage it
+// lands in depends on scheduling alone. All of them report the same busy
+// identity, with the deadline preserved. Positive stale proofs and errors
+// already classified as busy are kept, and explicit cancellation stays
+// cancellation (checkoutMutationAdmissionError leaves it unwrapped).
+func checkoutAdmissionBudgetError(ctx context.Context, stage string, err error) error {
+	if err == nil || errors.Is(err, ErrCheckoutMutationBusy) || errors.Is(err, ErrCheckoutMutationStale) {
+		return err
+	}
+	ctxErr := ctx.Err()
+	if ctxErr == nil {
+		return err
+	}
+	if !errors.Is(err, ctxErr) {
+		err = fmt.Errorf("%w: %w", ctxErr, err)
+	}
+	return checkoutMutationAdmissionError(ctx, stage, err)
 }
 
 func checkoutMutationContext(ctx, lifetime context.Context) (context.Context, context.CancelFunc) {
