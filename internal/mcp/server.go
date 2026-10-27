@@ -130,7 +130,11 @@ func (sh *symbolHistory) All() map[string][]SymbolModification {
 
 // Server wraps the MCP server with Gortex-specific tools.
 type Server struct {
-	mcpServer *server.MCPServer
+	// editOperations covers actual source-edit handler completions across this
+	// Server's sessions/views, including handlers that outlive their caller.
+	// Native filesystem stimuli remain harness-owned, not inferred from events.
+	editOperations editOperationCounters
+	mcpServer      *server.MCPServer
 	// connSessions tracks daemon-socket connections registered as live
 	// mcp-go client sessions so server-initiated notifications reach
 	// them (ConnectSession / DisconnectSession / WithClientSession in

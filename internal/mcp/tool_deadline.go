@@ -514,6 +514,9 @@ func abandonedToolMessage(name string, timeout time.Duration, verdict mutationCo
 }
 
 func (s *Server) boundToolHandler(h mcpserver.ToolHandlerFunc) mcpserver.ToolHandlerFunc {
+	// This wrapper runs INSIDE boundHandler's actual execution, so answering
+	// an abandoned caller cannot count an unfinished source operation.
+	h = s.observeEditOperationHandler(h)
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		name := req.Params.Name
 		return boundHandler(s, "tool", name, (func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error))(h),
