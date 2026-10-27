@@ -157,3 +157,25 @@ Pending/unobserved durations must remain missing in benchmark inputs. They
 must not become zero-valued successful observations. This initial projection
 does not claim the 5% phase-sum, 100-edit, runtime-overhead, or real read-back
 acceptance gates in #1005.
+
+## Store-level WAL observations
+
+The store's `WALReclaimStats` adds cancellation/refusal counts for the first
+consumed writer-parked, announced-intent or original-operation cancellation
+cause of a final non-reset reclaim attempt. A positively observed parked writer
+has precedence when both demand signals are positive; this is observation
+precedence, not a claim that only one signal caused contention. Multiple polls,
+writer-credit stages and helper cleanup do not become multiple attempts.
+Successful final resets, normal helper cleanup, cycle/bulk withdrawal and a
+child budget expiration are not counted as other caller/shutdown cancellation.
+The existing common writer-waiting error remains available through `errors.Is`.
+
+`ObservedPeakWALBytes` is a sampled high-water mark since the shared store core
+opened. `WALPeakObserved` distinguishes an actual size observation from missing
+evidence; in-memory/unsupported stores do not fabricate a zero WAL observation.
+It reuses existing successful size reads and adds no file/stat/SQL work to edits.
+Generation handles share the same peak; independent stores do not. Truncate,
+shrink and status reads never reset it. This is a lower bound on instantaneous
+physical peak and cannot be subtracted into a warm-run peak after startup.
+Daemon/MCP transport wiring and CPU/edit denominator coverage remain separate
+pending work; these store observations do not establish those acceptance gates.
