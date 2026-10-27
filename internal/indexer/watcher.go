@@ -1983,6 +1983,7 @@ func (w *Watcher) armPointMutationTimerLocked(path string, kind ChangeKind, gene
 }
 
 func (w *Watcher) runPointMutation(path string, kind ChangeKind, generation uint64, retryAttempt int) {
+	publication := w.beginPointPublication(path, generation)
 	if w.pointMutationClaimed != nil {
 		w.pointMutationClaimed(path)
 	}
@@ -2035,13 +2036,13 @@ func (w *Watcher) runPointMutation(path string, kind ChangeKind, generation uint
 			if w.mutationBeforeComplete != nil {
 				w.mutationBeforeComplete(path, generation)
 			}
-			w.completeMutationWaitersWithFanout(path, generation, patchErr, fanout)
+			w.completeMutationWaitersObserved(path, generation, patchErr, fanout, true, publication)
 		}
 	}()
 	if w.pointMutationPatch != nil {
 		patchErr = w.pointMutationPatch(path, kind, generation)
 	} else {
-		patchErr = w.patchGraphObservingFanout(path, kind, generation, &fanout)
+		patchErr = w.patchGraphWithReceiptStateObserved(path, kind, generation, false, &fanout, publication)
 	}
 	var storageErr *store_sqlite.StorageError
 	if errors.As(patchErr, &storageErr) {
@@ -2118,6 +2119,17 @@ func (w *Watcher) completeMutationWaitersGuarded(
 	fanout DerivedFanoutCompleteness,
 	requireCurrent bool,
 ) bool {
+	return w.completeMutationWaitersObserved(path, appliedGeneration, err, fanout, requireCurrent, nil)
+}
+
+func (w *Watcher) completeMutationWaitersObserved(
+	path string,
+	appliedGeneration uint64,
+	err error,
+	fanout DerivedFanoutCompleteness,
+	requireCurrent bool,
+	publication *pointPublicationAttempt,
+) bool {
 	type completion struct {
 		requested uint64
 		done      chan MutationResult
@@ -2139,8 +2151,12 @@ func (w *Watcher) completeMutationWaitersGuarded(
 		delete(w.pendingGeneration, path)
 	}
 	var completions []completion
+	var accepted *PublicationPhaseRecord
 	for generation, waiter := range w.mutationWaiters[path] {
 		if generation <= appliedGeneration {
+			if publication != nil && err == nil && !w.stopping && generation == appliedGeneration && waiter.publication == publication.record {
+				accepted = waiter.publication
+			}
 			completions = append(completions, completion{requested: generation, done: waiter.done})
 			delete(w.mutationWaiters[path], generation)
 		}
@@ -2149,6 +2165,9 @@ func (w *Watcher) completeMutationWaitersGuarded(
 		delete(w.mutationWaiters, path)
 	}
 	w.mu.Unlock()
+	if accepted != nil {
+		accepted.Absorb(publication.stamps)
+	}
 
 	for _, completion := range completions {
 		completion.done <- MutationResult{
@@ -2610,6 +2629,17 @@ func (w *Watcher) patchGraphWithReceiptState(
 	receiptChecked bool,
 	fanout *DerivedFanoutCompleteness,
 ) error {
+	return w.patchGraphWithReceiptStateObserved(path, kind, generation, receiptChecked, fanout, nil)
+}
+
+func (w *Watcher) patchGraphWithReceiptStateObserved(
+	path string,
+	kind ChangeKind,
+	generation uint64,
+	receiptChecked bool,
+	fanout *DerivedFanoutCompleteness,
+	publication *pointPublicationAttempt,
+) error {
 	if !w.generationCurrent(path, generation) {
 		return errMutationSuperseded
 	}
@@ -2619,12 +2649,13 @@ func (w *Watcher) patchGraphWithReceiptState(
 	// IndexRepo replacement uses the same lane and cannot change underneath
 	// the raw patch.
 	laneCtx, cancelLane := w.mutationLaneContext()
+	laneCtx = publication.withContext(laneCtx)
 	err := w.indexer.coordinateRepositoryMutation(laneCtx, OutputEntryWatcherPatchGraph, func() error {
 		idx := w.currentMutationIndexer()
 		if idx == nil {
 			return errWatcherIndexerMissing
 		}
-		return w.patchGraphWithReceiptStateRawModern(idx, path, kind, generation, receiptChecked, &pending, fanout)
+		return w.patchGraphWithReceiptStateRawModern(laneCtx, idx, path, kind, generation, receiptChecked, &pending, fanout)
 	})
 	cancelLane()
 	// User callbacks are deliberately outside the repository lane. Their
@@ -2676,6 +2707,7 @@ func (w *Watcher) reindexPointPathRaw(idx *Indexer, path string) (*IndexResult, 
 // patch with the same receipt, resolver, and exact derived-invalidation pipeline
 // used by bounded reconciliation. The caller already owns the repository lane.
 func (w *Watcher) patchGraphWithReceiptStateRawModern(
+	ctx context.Context,
 	idx *Indexer,
 	path string,
 	kind ChangeKind,
@@ -2745,7 +2777,9 @@ func (w *Watcher) patchGraphWithReceiptStateRawModern(
 	// "complete" over a catch-up that was cut.
 	observation := beginDerivedFanoutObservation(idx)
 	defer observation.close()
+	markPointPublication(ctx, PublicationPatchExecutionStarted)
 	result, err := w.reindexPointPathRaw(idx, path)
+	markPointPublication(ctx, PublicationPatchExecutionFinished)
 	observed := observation.close()
 	if err != nil {
 		// A failed patch publishes no fan-out verdict. Whatever the bounded

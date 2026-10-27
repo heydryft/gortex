@@ -69,8 +69,14 @@ const (
 	// coordinator's queue.
 	PublicationTicketEnqueued PublicationPhase = "ticket_enqueued"
 	// PublicationCycleStarted is the coordinator starting the cycle that will
-	// serve the ticket (the quiet window has closed).
+	// serve the ticket (the quiet window has closed), or the accepted canonical
+	// point attempt becoming runnable. It is not a pure debounce duration.
 	PublicationCycleStarted PublicationPhase = "cycle_started"
+	// These are the accepted canonical point attempt's actual common executor
+	// boundaries. They exclude before-image inspection and post-executor event
+	// work; they are not a full patch wall or a split of its nested deep laps.
+	PublicationPatchExecutionStarted  PublicationPhase = "patch_execution_started"
+	PublicationPatchExecutionFinished PublicationPhase = "patch_execution_finished"
 	// PublicationAdmitted is the build acquiring the shared build lane.
 	PublicationAdmitted PublicationPhase = "admitted"
 	// PublicationPlanned is the build's file set and generation being fixed.

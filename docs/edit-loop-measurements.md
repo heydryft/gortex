@@ -52,6 +52,25 @@ Rebinding a commit to a replacement freshness receipt does not borrow that
 replacement's timing or retarget the original record. Atomic batch/journal
 timing and response/transport timing remain separate pending work.
 
+Canonical point execution additionally collects `cycle_started`,
+`patch_execution_started`, and `patch_execution_finished` on a local attempt.
+Only the exact successful winner at the existing guarded completion can absorb
+those stamps, outside the watcher lock and before result delivery. Older
+coalesced receipts receive completion without the winner's execution spans.
+Retry, superseded and stopped attempts discard their collectors; native or
+uninstrumented paths allocate no collector. Outstanding waiter ownership is
+released by the existing completion/stop paths rather than a tracing registry.
+
+The execution pair surrounds the common point executor, including its actual
+standalone or MultiWatcher parse/apply/resolve/derived implementation. It excludes
+before-image inspection and post-executor event work. `cycle_started` names the
+accepted runnable attempt, which may follow retries. These are outer execution
+events, not a pure debounce/lane/gate measurement, a full patch wall, or a split
+of nested deep phases. No deep checkout-builder phase is relabelled onto the
+contextless canonical pipeline, and internal storm/atomic batches remain outside
+this observation. The numeric deep laps and full patch wall therefore remain
+unobserved; no phase-sum or CPU attribution acceptance follows from these events.
+
 ## Separate lifetimes
 
 `phase_timing.clock` is `monotonic` when a timeline exists, otherwise
