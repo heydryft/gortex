@@ -67,6 +67,14 @@ type MutationTicket struct {
 	PublicationRecord *PublicationPhaseRecord `json:"-"`
 }
 
+// mutationWaiter owns only outstanding ticket state. Publication metadata is
+// released with the same completion/stop paths as its existing result channel;
+// it is not a separate tracing registry or completed-history collection.
+type mutationWaiter struct {
+	done        chan MutationResult
+	publication *PublicationPhaseRecord
+}
+
 // MutationResult is the terminal graph-freshness result for a ticket.
 type MutationResult struct {
 	RequestedGeneration uint64
@@ -176,7 +184,7 @@ type Watcher struct {
 	historyMu              sync.Mutex
 	pending                map[string]*time.Timer
 	pendingGeneration      map[string]uint64
-	mutationWaiters        map[string]map[uint64]chan MutationResult
+	mutationWaiters        map[string]map[uint64]mutationWaiter
 	nextGeneration         uint64
 	// mutationRetryDelayFn and pointMutationPatch are deterministic test seams.
 	// Production retries use mutationRetryBackoff and the complete point pipeline.
@@ -1887,7 +1895,7 @@ func (w *Watcher) EnqueueFileMutations(ctx context.Context, files []string) (map
 		w.pendingGeneration = make(map[string]uint64)
 	}
 	if w.mutationWaiters == nil {
-		w.mutationWaiters = make(map[string]map[uint64]chan MutationResult)
+		w.mutationWaiters = make(map[string]map[uint64]mutationWaiter)
 	}
 	tickets := make(map[string]*MutationTicket, len(paths))
 	for path := range paths {
@@ -1900,10 +1908,10 @@ func (w *Watcher) EnqueueFileMutations(ctx context.Context, files []string) (map
 		w.nextGeneration++
 		generation := w.nextGeneration
 		if w.mutationWaiters[path] == nil {
-			w.mutationWaiters[path] = make(map[uint64]chan MutationResult)
+			w.mutationWaiters[path] = make(map[uint64]mutationWaiter)
 		}
 		done := make(chan MutationResult, 1)
-		w.mutationWaiters[path][generation] = done
+		w.mutationWaiters[path][generation] = mutationWaiter{done: done}
 		w.pendingGeneration[path] = generation
 		w.stormGenerations[path] = generation
 		w.stormBatch[path] = ChangeModified
@@ -1942,18 +1950,18 @@ func (w *Watcher) scheduleFileMutationWithRecord(path string, kind ChangeKind, r
 		w.pendingGeneration = make(map[string]uint64)
 	}
 	if w.mutationWaiters == nil {
-		w.mutationWaiters = make(map[string]map[uint64]chan MutationResult)
+		w.mutationWaiters = make(map[string]map[uint64]mutationWaiter)
 	}
 	if w.mutationWaiters[path] == nil {
-		w.mutationWaiters[path] = make(map[uint64]chan MutationResult)
+		w.mutationWaiters[path] = make(map[uint64]mutationWaiter)
 	}
 	done := make(chan MutationResult, 1)
-	w.mutationWaiters[path][generation] = done
 	w.pendingGeneration[path] = generation
 	ticket := &MutationTicket{Path: path, Generation: generation, Done: done}
 	if record != nil && record.bindCanonicalTicket(generation, time.Now()) {
 		ticket.PublicationRecord = record
 	}
+	w.mutationWaiters[path][generation] = mutationWaiter{done: done, publication: ticket.PublicationRecord}
 	w.armPointMutationTimerLocked(path, kind, generation, 0, time.Duration(w.config.DebounceMs)*time.Millisecond)
 	w.mu.Unlock()
 	return ticket
@@ -2131,9 +2139,9 @@ func (w *Watcher) completeMutationWaitersGuarded(
 		delete(w.pendingGeneration, path)
 	}
 	var completions []completion
-	for generation, done := range w.mutationWaiters[path] {
+	for generation, waiter := range w.mutationWaiters[path] {
 		if generation <= appliedGeneration {
-			completions = append(completions, completion{requested: generation, done: done})
+			completions = append(completions, completion{requested: generation, done: waiter.done})
 			delete(w.mutationWaiters[path], generation)
 		}
 	}
@@ -2161,9 +2169,9 @@ func (w *Watcher) failMutationWaiters(err error) {
 	w.mutationWaiters = nil
 	w.mu.Unlock()
 	for _, byGeneration := range waiters {
-		for generation, done := range byGeneration {
-			done <- MutationResult{RequestedGeneration: generation, Err: err}
-			close(done)
+		for generation, waiter := range byGeneration {
+			waiter.done <- MutationResult{RequestedGeneration: generation, Err: err}
+			close(waiter.done)
 		}
 	}
 }
@@ -2476,12 +2484,12 @@ func (w *Watcher) completeStormMutationWaiters(
 		if pathErr != nil {
 			pathFanout = DerivedFanoutCompleteness{}
 		}
-		for requestedGeneration, done := range w.mutationWaiters[path] {
+		for requestedGeneration, waiter := range w.mutationWaiters[path] {
 			if requestedGeneration > appliedGeneration {
 				continue
 			}
 			completions = append(completions, completion{
-				done: done,
+				done: waiter.done,
 				result: MutationResult{
 					RequestedGeneration: requestedGeneration,
 					AppliedGeneration:   appliedGeneration,

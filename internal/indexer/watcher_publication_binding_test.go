@@ -97,3 +97,30 @@ func TestCanonicalMutationCannotReuseRecordAcrossEqualSequences(t *testing.T) {
 	require.NoError(t, awaitMutationRetryResult(t, first).Err)
 	require.NoError(t, awaitMutationRetryResult(t, second).Err)
 }
+
+func TestMutationWaiterReleasesPublicationWithExistingLifetime(t *testing.T) {
+	w := newMutationRetryTestWatcher(t)
+	w.config.DebounceMs = int(time.Hour / time.Millisecond)
+	recorder := NewPublicationPhaseRecorder(2, 1)
+	record := recorder.Begin("", "outstanding", PublicationSourceMCPEdit, time.Now())
+	ticket := w.scheduleFileMutationWithRecord("edit.go", ChangeModified, record)
+	w.mu.Lock()
+	retained := w.mutationWaiters["edit.go"][ticket.Generation].publication
+	w.mu.Unlock()
+	require.Same(t, record, retained)
+	require.True(t, w.completeMutationWaitersIfCurrent("edit.go", ticket.Generation, nil))
+	require.NoError(t, awaitMutationRetryResult(t, ticket).Err)
+	w.mu.Lock()
+	remaining := len(w.mutationWaiters)
+	w.mu.Unlock()
+	require.Zero(t, remaining, "completion has no separate publication history to prune")
+
+	stopped := recorder.Begin("", "stopped", PublicationSourceMCPEdit, time.Now())
+	stoppedTicket := w.scheduleFileMutationWithRecord("stopped.go", ChangeModified, stopped)
+	require.NoError(t, w.Stop())
+	require.ErrorIs(t, awaitMutationRetryResult(t, stoppedTicket).Err, errWatcherStopped)
+	w.mu.Lock()
+	remaining = len(w.mutationWaiters)
+	w.mu.Unlock()
+	require.Zero(t, remaining, "stop releases the same pending ownership")
+}
