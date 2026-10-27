@@ -1305,6 +1305,10 @@ func (s *Server) waitBatchGraphReceipts(ctx context.Context, files []batchTransa
 			return
 		}
 		timer := time.NewTimer(remaining)
+		// Preserve the bounded post-commit wait after successful admission,
+		// even if the caller canceled while committing. Already-admitted
+		// publication can still make this durable receipt fresh. The slow-lane
+		// admission above remains cancellation-aware and can leave it pending.
 		select {
 		case <-receipt.done:
 			if !timer.Stop() {
@@ -1314,9 +1318,6 @@ func (s *Server) waitBatchGraphReceipts(ctx context.Context, files []batchTransa
 				}
 			}
 		case <-timer.C:
-			return
-		case <-waitCtx.Done():
-			timer.Stop()
 			return
 		}
 	}
