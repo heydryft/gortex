@@ -17,6 +17,18 @@ import "strings"
 // Series names. The prefix is the subsystem, the suffix is the unit: _total
 // for a counter, _seconds for a duration, and a bare noun for a gauge.
 const (
+	// Dispatcher admission series have a fixed three-lane vocabulary. Queue
+	// bucket counters are disjoint upper bounds in milliseconds, not cumulative.
+	MCPDispatchInFlight                = "daemon_mcp_dispatch_in_flight"
+	MCPDispatchQueueDepth              = "daemon_mcp_dispatch_queue_depth"
+	MCPDispatchDraining                = "daemon_mcp_dispatch_draining"
+	MCPDispatchCancelledHeld           = "daemon_mcp_dispatch_cancelled_held"
+	MCPDispatchRefusalsTotal           = "daemon_mcp_dispatch_refusals_total"
+	MCPDispatchReservedSlotsUsed       = "daemon_mcp_dispatch_reserved_slots_used"
+	MCPDispatchReservedAdmissionsTotal = "daemon_mcp_dispatch_reserved_admissions_total"
+	MCPDispatchQueueWaitBucketsTotal   = "daemon_mcp_dispatch_queue_wait_buckets_total"
+	MCPDispatchQueueWaitSeconds        = "daemon_mcp_dispatch_queue_wait_seconds"
+
 	// SearchRerankAnalysisSkippedBusyTotal counts searches that omitted all analysis
 	// ranking signals because an optional read found the store writer busy.
 	SearchRerankAnalysisSkippedBusyTotal = "views_search_rerank_analysis_skipped_busy_total"
@@ -632,7 +644,20 @@ func FallbackReasonCode(reason string) string {
 
 // catalog declares every series. It is the allow-list: a name absent from it
 // records nothing.
+var dispatchLaneLabel = labelSpec{name: "lane", values: []string{"mutating", "fast", "slow"}}
+var dispatchWaitOutcomeLabel = labelSpec{name: "outcome", values: []string{"admitted", "refused", "cancelled"}}
+
 var catalog = map[string]spec{
+	MCPDispatchInFlight:                {kind: kindGauge, labels: []labelSpec{dispatchLaneLabel}},
+	MCPDispatchQueueDepth:              {kind: kindGauge, labels: []labelSpec{dispatchLaneLabel}},
+	MCPDispatchDraining:                {kind: kindGauge, labels: []labelSpec{dispatchLaneLabel}},
+	MCPDispatchCancelledHeld:           {kind: kindGauge, labels: []labelSpec{dispatchLaneLabel}},
+	MCPDispatchRefusalsTotal:           {kind: kindCounter, labels: []labelSpec{dispatchLaneLabel}},
+	MCPDispatchReservedSlotsUsed:       {kind: kindGauge},
+	MCPDispatchReservedAdmissionsTotal: {kind: kindCounter},
+	MCPDispatchQueueWaitSeconds:        {kind: kindDuration, labels: []labelSpec{dispatchLaneLabel, dispatchWaitOutcomeLabel}},
+	MCPDispatchQueueWaitBucketsTotal:   {kind: kindCounter, labels: []labelSpec{dispatchLaneLabel, dispatchWaitOutcomeLabel, {name: "bucket_ms", values: []string{"1", "5", "10", "25", "50", "100", "250", "500", "1000", "2500", "5000", "10000", "30000", "inf"}}}},
+
 	SearchRerankAnalysisSkippedBusyTotal: {kind: kindCounter},
 	FamilyInventorySeconds: {kind: kindDuration, labels: []labelSpec{
 		{name: LabelOutcome, values: []string{OutcomeOK, OutcomeError}},

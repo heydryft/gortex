@@ -828,6 +828,8 @@ func (s *Server) handleControl(ctx context.Context, _ *Session, req ControlReque
 		}
 		// Binary-drift self-report: did the on-disk daemon image get
 		// replaced under this running process? See populateBinaryStatus.
+		dispatch := MCPDispatchSnapshot()
+		st.MCPDispatch = &dispatch
 		s.populateBinaryStatus(&st)
 		buf, _ := json.Marshal(st)
 		return ControlResponse{OK: true, Result: buf}

@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"github.com/zzet/gortex/internal/viewmetrics"
 	"sync"
 	"time"
 )
@@ -34,6 +35,8 @@ type mcpDispatchScheduler struct {
 	active             [3]int
 	draining           [3]int
 	nonMutating        int
+	reservedAdmissions uint64
+	protocolWaiting    int
 	held               map[string]int
 	lanes              [3]mcpDispatchLane
 }
@@ -44,6 +47,8 @@ type mcpDispatchLane struct {
 	queued        int
 	lastDrain     time.Time
 	drainInterval time.Duration
+	wait          [3]mcpDispatchWaitStats
+	refusals      uint64
 }
 
 type mcpDispatchSessionQueue struct {
@@ -60,6 +65,7 @@ type mcpDispatchWaiter struct {
 	err       error
 	done      chan struct{}
 	grant     *mcpScheduledGrant
+	observed  bool
 }
 
 type mcpGrantState uint8
@@ -136,6 +142,12 @@ func (s *mcpDispatchScheduler) grantLocked(class MCPDispatchClass, session strin
 		return nil // Protocol admission or an injected holder took capacity.
 	}
 	s.active[class]++
+	viewmetrics.AddGauge(viewmetrics.MCPDispatchInFlight, 1, class.String())
+	if class == MCPDispatchMutating && s.active[class] <= s.reserve {
+		s.reservedAdmissions++
+		viewmetrics.Count(viewmetrics.MCPDispatchReservedAdmissionsTotal)
+		viewmetrics.AddGauge(viewmetrics.MCPDispatchReservedSlotsUsed, 1)
+	}
 	if class != MCPDispatchMutating {
 		s.nonMutating++
 	}
@@ -157,6 +169,7 @@ func (s *mcpDispatchScheduler) scheduleLocked() {
 				now := time.Now()
 				if waiter.ctx != nil && waiter.ctx.Err() != nil {
 					waiter = s.popLocked(class, index)
+					s.observeQueuedWaitLocked(waiter, mcpWaitCancelled, now)
 					waiter.err = fmt.Errorf("%w: %w", errMCPDispatchNotStarted, waiter.ctx.Err())
 					close(waiter.done)
 					admitted = true
@@ -164,6 +177,7 @@ func (s *mcpDispatchScheduler) scheduleLocked() {
 				}
 				if !waiter.expiresAt.IsZero() && !now.Before(waiter.expiresAt) {
 					waiter = s.popLocked(class, index)
+					s.observeQueuedWaitLocked(waiter, mcpWaitRefused, now)
 					waiter.err = &mcpDispatchBusyError{waited: now.Sub(waiter.queuedAt), retryAfter: s.retryAfterLocked(class), lane: class}
 					close(waiter.done)
 					admitted = true
@@ -177,6 +191,7 @@ func (s *mcpDispatchScheduler) scheduleLocked() {
 					return
 				}
 				waiter = s.popLocked(class, index)
+				s.observeQueuedWaitLocked(waiter, mcpWaitAdmitted, now)
 				waiter.grant = grant
 				close(waiter.done)
 				admitted = true
@@ -201,6 +216,7 @@ func (s *mcpDispatchScheduler) popLocked(class MCPDispatchClass, index int) *mcp
 	q.requests[0] = nil
 	q.requests = q.requests[1:]
 	lane.queued--
+	viewmetrics.AddGauge(viewmetrics.MCPDispatchQueueDepth, -1, class.String())
 	if len(q.requests) == 0 {
 		copy(lane.sessions[index:], lane.sessions[index+1:])
 		lane.sessions[len(lane.sessions)-1] = nil
@@ -218,6 +234,7 @@ func (s *mcpDispatchScheduler) popLocked(class MCPDispatchClass, index int) *mcp
 }
 
 func (s *mcpDispatchScheduler) enqueueLocked(waiter *mcpDispatchWaiter) {
+	viewmetrics.AddGauge(viewmetrics.MCPDispatchQueueDepth, 1, waiter.class.String())
 	lane := &s.lanes[waiter.class]
 	for _, q := range lane.sessions {
 		if q.session == waiter.session {
@@ -244,6 +261,7 @@ func (s *mcpDispatchScheduler) removeLocked(waiter *mcpDispatchWaiter) {
 			q.requests[len(q.requests)-1] = nil
 			q.requests = q.requests[:len(q.requests)-1]
 			lane.queued--
+			viewmetrics.AddGauge(viewmetrics.MCPDispatchQueueDepth, -1, waiter.class.String())
 			if len(q.requests) == 0 {
 				copy(lane.sessions[index:], lane.sessions[index+1:])
 				lane.sessions[len(lane.sessions)-1] = nil
@@ -281,6 +299,7 @@ func (s *mcpDispatchScheduler) acquire(ctx context.Context, class MCPDispatchCla
 	now := time.Now()
 	s.owner.mu.Lock()
 	if err := ctx.Err(); err != nil {
+		s.observeWaitLocked(class, mcpWaitCancelled, 0)
 		s.owner.mu.Unlock()
 		signalMCPDispatchAdmission(ctx)
 		return nil, fmt.Errorf("%w: %w", errMCPDispatchNotStarted, err)
@@ -291,12 +310,14 @@ func (s *mcpDispatchScheduler) acquire(ctx context.Context, class MCPDispatchCla
 	}
 	if !hasQueue && s.eligibleLocked(class, session) {
 		if grant := s.grantLocked(class, session); grant != nil {
+			s.observeWaitLocked(class, mcpWaitAdmitted, time.Since(now))
 			s.owner.mu.Unlock()
 			return grant, nil
 		}
 	}
 	wait := mcpEffectiveQueueWait(ctx, mcpDispatchQueueWaitForContext(ctx), now)
 	if s.lanes[class].queued >= mcpDispatchQueueFactor*cap(s.slots) {
+		s.observeWaitLocked(class, mcpWaitRefused, 0)
 		retry := s.retryAfterLocked(class)
 		s.owner.mu.Unlock()
 		signalMCPDispatchAdmission(ctx)
@@ -315,8 +336,14 @@ func (s *mcpDispatchScheduler) acquire(ctx context.Context, class MCPDispatchCla
 		s.owner.mu.Unlock()
 		return waiter.grant, nil
 	}
+	if waiter.err != nil {
+		s.owner.mu.Unlock()
+		signalMCPDispatchAdmission(ctx)
+		return nil, waiter.err
+	}
 	if wait <= 0 {
 		s.removeLocked(waiter)
+		s.observeQueuedWaitLocked(waiter, mcpWaitRefused, now)
 		retry := s.retryAfterLocked(class)
 		s.scheduleLocked()
 		s.owner.mu.Unlock()
@@ -338,6 +365,7 @@ func (s *mcpDispatchScheduler) acquire(ctx context.Context, class MCPDispatchCla
 			waiter.grant.completeLocked(time.Now())
 		} else {
 			s.removeLocked(waiter)
+			s.observeQueuedWaitLocked(waiter, mcpWaitCancelled, time.Now())
 			s.scheduleLocked()
 		}
 		s.owner.mu.Unlock()
@@ -352,6 +380,7 @@ func (s *mcpDispatchScheduler) acquire(ctx context.Context, class MCPDispatchCla
 		return nil, waiter.err
 	}
 	s.removeLocked(waiter)
+	s.observeQueuedWaitLocked(waiter, mcpWaitRefused, time.Now())
 	retry := s.retryAfterLocked(class)
 	s.scheduleLocked()
 	s.owner.mu.Unlock()
@@ -379,6 +408,10 @@ func (g *mcpScheduledGrant) dropActiveLocked(now time.Time) {
 		panic("MCP dispatch grant lost its capacity token")
 	}
 	s.active[g.class]--
+	viewmetrics.AddGauge(viewmetrics.MCPDispatchInFlight, -1, g.class.String())
+	if !g.protocol && g.class == MCPDispatchMutating && s.active[g.class] < s.reserve {
+		viewmetrics.AddGauge(viewmetrics.MCPDispatchReservedSlotsUsed, -1)
+	}
 	if !g.protocol {
 		if g.class != MCPDispatchMutating {
 			s.nonMutating--
@@ -402,6 +435,8 @@ func (c *mcpDispatchCoordinator) promoteCancelledLocked(now time.Time) {
 		grant.dropActiveLocked(now)
 		grant.state = mcpGrantDraining
 		grant.pool.draining[grant.class]++
+		viewmetrics.AddGauge(viewmetrics.MCPDispatchCancelledHeld, -1, grant.class.String())
+		viewmetrics.AddGauge(viewmetrics.MCPDispatchDraining, 1, grant.class.String())
 		c.draining++
 		grant.pool.scheduleLocked()
 	}
@@ -417,11 +452,13 @@ func (g *mcpScheduledGrant) completeLocked(now time.Time) {
 	} else {
 		c.draining--
 		g.pool.draining[g.class]--
+		viewmetrics.AddGauge(viewmetrics.MCPDispatchDraining, -1, g.class.String())
 	}
 	g.state = mcpGrantReleased
 	// Remove a completed capacity-charged cancellation before promotion.
 	for i, grant := range c.blocked {
 		if grant == g {
+			viewmetrics.AddGauge(viewmetrics.MCPDispatchCancelledHeld, -1, g.class.String())
 			copy(c.blocked[i:], c.blocked[i+1:])
 			c.blocked[len(c.blocked)-1] = nil
 			c.blocked = c.blocked[:len(c.blocked)-1]
@@ -452,12 +489,14 @@ func (g *mcpScheduledGrant) cancel() {
 	g.cancelled = true
 	if c.draining >= mcpDispatchDrainLimit {
 		c.blocked = append(c.blocked, g)
+		viewmetrics.AddGauge(viewmetrics.MCPDispatchCancelledHeld, 1, g.class.String())
 		return
 	}
 	g.dropActiveLocked(time.Now())
 	g.state = mcpGrantDraining
 	c.draining++
 	g.pool.draining[g.class]++
+	viewmetrics.AddGauge(viewmetrics.MCPDispatchDraining, 1, g.class.String())
 	g.pool.scheduleLocked()
 }
 
@@ -476,14 +515,25 @@ func (g *mcpScheduledGrant) releaseEarly() bool {
 // unbudgeted wait. They are exempt from tool reservations/session limits, but
 // their completion still wakes queued tools and shares the same physical cap.
 func (s *mcpDispatchScheduler) acquireProtocol(ctx context.Context) (*mcpScheduledGrant, error) {
+	now := time.Now()
+	s.owner.mu.Lock()
+	s.protocolWaiting++
+	s.owner.mu.Unlock()
 	select {
 	case s.slots <- struct{}{}:
 		s.owner.mu.Lock()
+		s.protocolWaiting--
 		s.active[MCPDispatchFast]++
+		viewmetrics.AddGauge(viewmetrics.MCPDispatchInFlight, 1, MCPDispatchFast.String())
+		s.observeWaitLocked(MCPDispatchFast, mcpWaitAdmitted, time.Since(now))
 		grant := &mcpScheduledGrant{pool: s, class: MCPDispatchFast, state: mcpGrantActive, protocol: true}
 		s.owner.mu.Unlock()
 		return grant, nil
 	case <-ctx.Done():
+		s.owner.mu.Lock()
+		s.protocolWaiting--
+		s.observeWaitLocked(MCPDispatchFast, mcpWaitCancelled, time.Since(now))
+		s.owner.mu.Unlock()
 		signalMCPDispatchAdmission(ctx)
 		return nil, fmt.Errorf("%w: %w", errMCPDispatchNotStarted, ctx.Err())
 	}
