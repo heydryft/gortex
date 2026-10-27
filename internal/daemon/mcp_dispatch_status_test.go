@@ -2,10 +2,27 @@ package daemon
 
 import (
 	"errors"
+	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/zzet/gortex/internal/viewmetrics"
 )
+
+func TestDispatchQueueWaitMetricBucketsMatchStatusBounds(t *testing.T) {
+	declared := viewmetrics.LabelVocabularies(viewmetrics.MCPDispatchQueueWaitBucketsTotal)["bucket_ms"]
+	if !slices.Equal(declared, mcpWaitBucketLabels[:]) {
+		t.Fatalf("emitted buckets=%v declared=%v", mcpWaitBucketLabels, declared)
+	}
+	for i, bound := range mcpWaitBoundsMS {
+		if want := fmt.Sprintf("%dms", bound); mcpWaitBucketLabels[i] != want {
+			t.Fatalf("bucket %d label=%q status bound=%dms", i, mcpWaitBucketLabels[i], bound)
+		}
+	}
+	if mcpWaitBucketLabels[len(mcpWaitBoundsMS)] != "inf" {
+		t.Fatal("final metric bucket must retain values above the last status bound")
+	}
+}
 
 func TestDispatchStatusCountsAdmittedAndRefusedQueueWaits(t *testing.T) {
 	pool := testDispatchPool(1)

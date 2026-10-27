@@ -307,7 +307,7 @@ Daemon status exposes `mcp_dispatch`: lane in-flight, queued, draining and
 cancelled-but-held counts, refusals, reserved-slot use and queue-wait histograms
 for admitted, refused and cancelled calls. Histogram buckets are disjoint
 upper bounds in milliseconds and include zero-wait admissions. The metrics
-surface reports the corresponding `daemon_mcp_dispatch_*` series without
+surface reports the corresponding `views_mcp_dispatch_*` series without
 session or request identifiers.
 
 The handler bound fires just inside any deadline the transport already imposed,

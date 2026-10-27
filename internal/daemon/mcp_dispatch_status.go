@@ -13,7 +13,7 @@ const (
 )
 
 var mcpWaitBoundsMS = [...]int64{1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000}
-var mcpWaitBucketLabels = [...]string{"1", "5", "10", "25", "50", "100", "250", "500", "1000", "2500", "5000", "10000", "30000", "inf"}
+var mcpWaitBucketLabels = [...]string{"1ms", "5ms", "10ms", "25ms", "50ms", "100ms", "250ms", "500ms", "1000ms", "2500ms", "5000ms", "10000ms", "30000ms", "inf"}
 var mcpWaitOutcomeLabels = [...]string{"admitted", "refused", "cancelled"}
 
 type mcpDispatchWaitStats struct {
