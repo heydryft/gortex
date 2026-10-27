@@ -2987,7 +2987,9 @@ func (mi *MultiIndexer) incrementalReindexRepoRawMode(repoPrefix string, paths [
 	// The stable per-repository lane is held before this executor runs. Take
 	// the global reachability topology gate second and keep it through the
 	// resolver, metadata, and derived tails to avoid lane/gate inversion.
+	gate := mode.publication.beginPatchLap(patchGateWait)
 	finishTopologyMutation := reach.BeginTopologyMutation(mi.graph)
+	gate.end()
 	topologyChanged := true
 	defer func() { finishTopologyMutation(topologyChanged) }()
 
@@ -3013,6 +3015,7 @@ func (mi *MultiIndexer) incrementalReindexRepoRawMode(repoPrefix string, paths [
 		repoPrefix, result, receipt, batch, mode.exactPointSemantic,
 	)
 
+	mtimes := mode.publication.beginPatchLap(patchMtimes)
 	fileMtimes := idx.publishFileMtimes()
 	mi.mu.Lock()
 	mi.repos[repoPrefix] = &RepoMetadata{
@@ -3034,17 +3037,14 @@ func (mi *MultiIndexer) incrementalReindexRepoRawMode(repoPrefix string, paths [
 		IsWorktree: meta.IsWorktree,
 	}
 	mi.mu.Unlock()
+	mtimes.end()
 
 	idx.observeIncrementalCatchup("derived", result.DerivedInvalidation.Files)
-	if mode.publication != nil {
-		mode.publication.markAt(PublicationPatchDerivedStarted, time.Now())
-	}
+	derived := mode.publication.beginDerivedPatchLap()
 	mi.runIncrementalDerivedPassesWithPriorTopologyHeld(context.Background(), map[string]DerivedInvalidationPlan{
 		repoPrefix: result.DerivedInvalidation,
 	}, result.capabilityPrior)
-	if mode.publication != nil {
-		mode.publication.markAt(PublicationPatchDerivedFinished, time.Now())
-	}
+	derived.endDerived()
 
 	topologyChanged = incrementalTopologyChanged(result)
 	return result, nil

@@ -24,7 +24,7 @@ func (w *Watcher) beginPointPublication(path string, generation uint64) *pointPu
 	if record == nil {
 		return nil // no tracing allocations on native/uninstrumented paths
 	}
-	stamps := &PublicationStamps{}
+	stamps := record.newCanonicalPatchStamps()
 	stamps.markAt(PublicationCycleStarted, time.Now())
 	return &pointPublicationAttempt{record: record, stamps: stamps}
 }

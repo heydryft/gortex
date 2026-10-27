@@ -29,10 +29,25 @@ type canonicalLapTotal struct {
 }
 
 type canonicalPatchLaps struct {
-	laps    [canonicalPatchLapCount]canonicalLapTotal
-	lastEnd time.Time
-	active  int
-	invalid bool
+	laps             [canonicalPatchLapCount]canonicalLapTotal
+	lastEnd          time.Time
+	active           int
+	invalid          bool
+	origin, enqueued time.Time // immutable original admission identity, for attempt logs
+	ticket           uint64
+}
+
+func (p *PublicationPhaseRecord) newCanonicalPatchStamps() *PublicationStamps {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	laps := &canonicalPatchLaps{origin: p.origin, ticket: p.ticket}
+	for _, mark := range p.marks {
+		if mark.phase == PublicationTicketEnqueued {
+			laps.enqueued = mark.at
+			break
+		}
+	}
+	return &PublicationStamps{patchLaps: laps}
 }
 
 type canonicalLapSpan struct {
@@ -182,5 +197,20 @@ func (p *canonicalPatchEvidence) project(offsets map[PublicationPhase]int64, ter
 		}
 		ms := float64(v.totalNS) / 1e6
 		out.Milliseconds[name], out.States[name] = &ms, "measured"
+	}
+}
+
+func (s *PublicationStamps) beginDerivedPatchLap() canonicalLapSpan {
+	span := s.beginPatchLap(patchDerived)
+	if span.stamps != nil {
+		s.markAt(PublicationPatchDerivedStarted, span.started)
+	}
+	return span
+}
+
+func (span *canonicalLapSpan) endDerived() {
+	s := span.stamps
+	if at := span.end(); !at.IsZero() {
+		s.markAt(PublicationPatchDerivedFinished, at)
 	}
 }

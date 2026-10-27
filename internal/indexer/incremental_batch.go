@@ -158,7 +158,9 @@ func (idx *Indexer) reindexIncrementalFilesBatched(
 	deleteTiming := idx.startReconcilePhase(idx.logger, idx.repoPrefix, "graph_delete",
 		zap.Int("deleted_files", len(deletedFiles)))
 	defer deleteTiming.abort()
+	deletion := markerBatch.publicationStamps().beginPatchLap(patchApply)
 	idx.evictDeletedFilesBatched(deletedFiles, &invalidation)
+	deletion.end()
 	deleteTiming.complete(nil)
 
 	passPlan, reparsed, failed, versionChanged := idx.reindexIncrementalStalePass(
@@ -265,6 +267,7 @@ func (idx *Indexer) reindexIncrementalChunk(
 	parseTiming := idx.startReconcilePhase(idx.logger, idx.repoPrefix, "chunk_parse",
 		zap.Int("candidate_files", len(files)), zap.Bool("includes_admission_wait", true))
 	defer parseTiming.abort()
+	parse := markerBatch.publicationStamps().beginPatchLap(patchParse)
 
 	stages := make([]*incrementalBatchStage, 0, len(files))
 	// Each staged result carries the tree-sitter tree its extraction
@@ -424,6 +427,7 @@ func (idx *Indexer) reindexIncrementalChunk(
 		}
 	}
 
+	parse.end()
 	parseTiming.complete(nil, zap.Int("consumed_files", consumed), zap.Int("staged_files", len(stages)),
 		zap.Int("inert_files", plan.InertFiles), zap.Int("read_failed_files", len(readFailed)),
 		zap.Int("fallback_files", len(fallbacks)), zap.Int("nodes", nodeCount), zap.Int("edges", edgeCount),
@@ -453,7 +457,9 @@ func (idx *Indexer) reindexIncrementalChunk(
 	receiptTiming := idx.startReconcilePhase(idx.logger, idx.repoPrefix, "chunk_receipts",
 		zap.Int("receipts", len(receipts)))
 	defer receiptTiming.abort()
+	mtimes := markerBatch.publicationStamps().beginPatchLap(patchMtimes)
 	freshPaths, stalePaths := idx.recordFileReadVersionsBatched(receipts)
+	mtimes.end()
 	receiptTiming.complete(nil, zap.Int("fresh_files", len(freshPaths)), zap.Int("stale_files", len(stalePaths)))
 	freshSet := make(map[string]struct{}, len(freshPaths))
 	for _, filePath := range freshPaths {
@@ -470,6 +476,7 @@ func (idx *Indexer) reindexIncrementalChunk(
 	}
 	var fallbackTiming *reconcilePhaseTiming
 	if len(fallbacks) > 0 {
+		markerBatch.publicationStamps().incompletePatchLaps()
 		// Legacy fallback combines extraction and graph mutation; do not label
 		// this interval as parse-only or silently charge it to graph apply.
 		fallbackTiming = idx.startReconcilePhase(idx.logger, idx.repoPrefix, "chunk_fallback_parse_apply",
@@ -634,6 +641,7 @@ func (idx *Indexer) commitIncrementalStages(
 	timing := idx.startReconcilePhase(idx.logger, idx.repoPrefix, "chunk_graph_apply",
 		zap.Int("staged_files", len(stages)))
 	defer timing.abort()
+	apply := markerBatch.publicationStamps().beginPatchLap(patchApply)
 	var plan DerivedInvalidationPlan
 	if journal := idx.contractCoreInputs; journal != nil {
 		paths := make([]string, 0, len(stages))
@@ -835,8 +843,12 @@ func (idx *Indexer) commitIncrementalStages(
 	idx.applyLap("metadata")
 	idx.persistIncrementalSidecars(stages)
 	idx.applyLap("sidecars")
+	apply.end()
+	search := markerBatch.publicationStamps().beginPatchLap(patchSearch)
 	idx.updateIncrementalSearch(stages)
 	idx.upsertIncrementalFTS(stages)
+	search.end()
+	apply = markerBatch.publicationStamps().beginPatchLap(patchApply)
 	idx.applyLap("search")
 
 	for _, stage := range stages {
@@ -856,6 +868,7 @@ func (idx *Indexer) commitIncrementalStages(
 			stage.graphPath, stage.priorNodes, stage.result.Nodes,
 		))
 	}
+	apply.end()
 	timing.complete(nil, zap.Int("structural_files", len(structural)), zap.Int("metadata_files", len(metadata)))
 	return plan
 }

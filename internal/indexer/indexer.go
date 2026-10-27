@@ -7453,7 +7453,9 @@ func (idx *Indexer) incrementalReindexPathsMode(
 	invalidation.Files = appendUniqueSorted(invalidation.Files, idx.graphFilePaths(reparsedFiles)...)
 	invalidation.structuralFiles = appendUniqueSorted(invalidation.structuralFiles, idx.graphFilePaths(reparsedFiles)...)
 	invalidation.Files = appendUniqueSorted(invalidation.Files, deletedDependencyFiles...)
+	mtimes := mode.publication.beginPatchLap(patchMtimes)
 	idx.pruneDeletedFileMtimes(deletedFiles)
+	mtimes.end()
 	idx.flushReparsePendingEnrichment(markerBatch)
 	if len(evictedGlobalsFiles) > 0 {
 		evicted := make(map[string]struct{}, len(evictedGlobalsFiles))

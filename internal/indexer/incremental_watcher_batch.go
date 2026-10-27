@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"go.uber.org/zap"
 
@@ -38,7 +37,7 @@ func (idx *Indexer) incrementalReindexPathsWithReceiptMode(
 	paths []string,
 	mode incrementalPathMode,
 ) (result *IndexResult, receipt *graph.MutationReceipt, batch *reparsePendingEnrichmentBatch, err error) {
-	batch = &reparsePendingEnrichmentBatch{deferResolverCatchup: true}
+	batch = &reparsePendingEnrichmentBatch{deferResolverCatchup: true, publication: mode.publication}
 	receiptStore, _ := idx.graph.(graph.MutationReceiptStore)
 	if receiptStore == nil {
 		result, err = idx.incrementalReindexPathsMode(root, paths, mode, batch)
@@ -201,7 +200,9 @@ func (idx *Indexer) runIncrementalResolutionCatchup(
 		return nil
 	}
 	idx.observeIncrementalCatchup("resolve", files)
+	resolve := batch.publicationStamps().beginPatchLap(patchResolve)
 	idx.resolveWithDeferredEvidence(batch, func() { resolveFiles(files) })
+	resolve.end()
 
 	idx.observeIncrementalCatchup("dataflow", files)
 	idx.materializeDataflowParamsForFiles(files)
@@ -370,7 +371,9 @@ func (idx *Indexer) incrementalWatcherPaths(root string, paths []string, mode in
 	// The coordinator owns the repository lane before invoking this executor.
 	// Take the reachability topology gate second and retain it through resolver
 	// and derived catch-up so readers observe the complete old or new graph.
+	gate := mode.publication.beginPatchLap(patchGateWait)
 	finishTopologyMutation := reach.BeginTopologyMutation(idx.graph)
+	gate.end()
 	topologyChanged := true
 	defer func() { finishTopologyMutation(topologyChanged) }()
 
@@ -390,10 +393,14 @@ func (idx *Indexer) incrementalWatcherPaths(root string, paths []string, mode in
 			}
 			idx.resolver.ResolveFilesAndIncoming(frontier)
 		})
+		names := mode.publication.beginPatchLap(patchResolve)
 		idx.resolveReceiptNamePendings(receipt)
+		names.end()
 	} else if needed && !exact {
 		idx.observeIncrementalCatchup("resolve", nil)
+		resolve := mode.publication.beginPatchLap(patchResolve)
 		idx.ResolveAll()
+		resolve.end()
 	}
 	if mode.forceExplicitFiles || !idx.deferGlobalPasses.Load() {
 		if mode.exactPointSemantic {
@@ -402,13 +409,9 @@ func (idx *Indexer) incrementalWatcherPaths(root string, paths []string, mode in
 			idx.runIncrementalWatcherSemantic(result.DerivedInvalidation.Files)
 		}
 		idx.observeIncrementalCatchup("derived", result.DerivedInvalidation.Files)
-		if mode.publication != nil {
-			mode.publication.markAt(PublicationPatchDerivedStarted, time.Now())
-		}
+		derived := mode.publication.beginDerivedPatchLap()
 		idx.runStandaloneIncrementalDerivedPassesWithPrior(result.DerivedInvalidation, result.capabilityPrior)
-		if mode.publication != nil {
-			mode.publication.markAt(PublicationPatchDerivedFinished, time.Now())
-		}
+		derived.endDerived()
 	}
 	topologyChanged = incrementalTopologyChanged(result)
 	return result, nil
@@ -566,19 +569,27 @@ func (mi *MultiIndexer) resolveIncrementalRepoMutationMode(
 		})
 		crossRepoFiles = appendUniqueSorted(crossRepoFiles, resolvedFiles...)
 		if receipt != nil && receipt.Complete {
+			names := batch.publicationStamps().beginPatchLap(patchResolve)
 			mi.runMasterResolveNames(vanishedReceiptNames(mi.graph, receipt))
+			names.end()
 		}
 	} else if needed && len(files) > 0 {
+		resolve := batch.publicationStamps().beginPatchLap(patchResolve)
 		mi.runMasterResolveFiles(files, false)
+		resolve.end()
 		if receipt != nil && receipt.Complete {
+			names := batch.publicationStamps().beginPatchLap(patchResolve)
 			mi.runMasterResolveNames(vanishedReceiptNames(mi.graph, receipt))
+			names.end()
 		}
 	} else if needed {
 		scope := map[string]struct{}{repoPrefix: {}}
 		if repoPrefix == "" {
 			scope = nil
 		}
+		resolve := batch.publicationStamps().beginPatchLap(patchResolve)
 		mi.runMasterResolve(scope, false)
+		resolve.end()
 		// No scoped frontier survived. Refresh any known files without adding a
 		// second graph-wide dataflow or durable-fact scan.
 		if idx != nil && result != nil {
@@ -604,10 +615,12 @@ func (mi *MultiIndexer) resolveIncrementalRepoMutationMode(
 		if idx != nil {
 			idx.observeIncrementalCatchup("cross_repo", crossRepoFiles)
 		}
+		cross := batch.publicationStamps().beginPatchLap(patchResolve)
 		if len(crossRepoFiles) > 0 {
 			mi.runCrossRepoResolveFiles(crossRepoFiles)
 		} else {
 			mi.runCrossRepoResolve(false)
 		}
+		cross.end()
 	}
 }

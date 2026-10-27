@@ -195,6 +195,7 @@ func persistFileMetaRows(target graph.Store, repoPrefix string, rows []graph.Fil
 const reparsePendingEnrichmentBatchSize = 256
 
 type reparsePendingEnrichmentBatch struct {
+	publication *PublicationStamps // optional local canonical attempt; never a live record
 	// npmConsumerFiles are unchanged importers parked by this mutation.
 	npmConsumerFiles      []string
 	byFile                map[string]bool
@@ -272,4 +273,11 @@ func (idx *Indexer) setReparsePendingEnrichments(pendingByFile map[string]bool) 
 	if len(updates) > 0 {
 		idx.graph.AddBatch(updates, nil)
 	}
+}
+
+func (b *reparsePendingEnrichmentBatch) publicationStamps() *PublicationStamps {
+	if b == nil {
+		return nil
+	}
+	return b.publication
 }

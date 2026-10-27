@@ -45,12 +45,15 @@ func requirePointExecution(t *testing.T, record *PublicationPhaseRecord, want bo
 		}
 	}
 	if want {
+		require.NotNil(t, record.Snapshot().patchLaps, "real standalone/MultiWatcher paths must carry the same local scalar collector")
 		require.LessOrEqual(t, offsets[PublicationPatchExecutionStarted], offsets[PublicationPatchDerivedStarted])
 		require.LessOrEqual(t, offsets[PublicationPatchDerivedStarted], offsets[PublicationPatchDerivedFinished])
 		require.LessOrEqual(t, offsets[PublicationPatchDerivedFinished], offsets[PublicationPatchExecutionFinished])
 		timing := record.Snapshot().EditTimings()
 		require.Equal(t, "measured", timing.States["derived"])
 		require.NotNil(t, timing.Milliseconds["derived"])
+	} else {
+		require.Nil(t, record.Snapshot().patchLaps, "rejected attempts must not transfer any scalar evidence")
 	}
 }
 
