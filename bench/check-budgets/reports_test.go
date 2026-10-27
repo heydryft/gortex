@@ -51,18 +51,50 @@ func syntheticReport() map[string]any {
 	return map[string]any{
 		"schema_version": 1, "run_id": "synthetic-repeat", "git_sha": strings.Repeat("a", 40), "profile": "agent", "seed": 1, "request_plan_sha256": strings.Repeat("b", 64), "complete": true, "errors": nil,
 		"crashes":  map[string]any{"panic_lines": 0, "sigabrt_lines": 0, "oom_log_lines": 0},
-		"workload": map[string]any{"scenario": "read", "agents": 1, "edit_agents": 0, "linked_worktrees": 0, "seed": 1, "profile": "agent", "duration_seconds": 120, "product_deadline_seconds": 120, "session_model": "synthetic"},
+		"workload": map[string]any{"scenario": "read", "agents": 1, "edit_agents": 0, "linked_worktrees": 0, "seed": 1, "profile": "agent", "duration_seconds": 120, "product_deadline_seconds": 120, "session_model": "per_agent"},
 		"host": map[string]any{"machine": "synthetic-host", "os": "linux", "arch": "arm64", "kernel": "test", "profile": "reference", "validated": true, "limits": map[string]any{
 			"cpu_quota": value(8, "cores"), "memory_max": value(16*1024*1024*1024, "bytes"), "logical_cpus": value(8, "cores"), "host_memory": value(16*1024*1024*1024, "bytes"), "disk_capacity_bytes": value(60*1024*1024*1024, "bytes"),
 		}},
 		"corpus": []any{map[string]any{"label": "gortex", "commit": strings.Repeat("c", 40)}},
 		"phases": []any{map[string]any{
-			"name": "read", "duration_seconds": 120, "never_visible": 0, "visibility_censored": 0, "errors": nil,
+			"name": "read", "session_model": "per_agent", "duration_seconds": 120, "never_visible": 0, "visibility_censored": 0, "errors": nil,
 			"metrics":  map[string]any{"force_killed": value(0, "boolean")},
 			"gate":     map[string]any{"readiness": map[string]any{"ready": true, "enriched": true, "loaded_roots": []string{"/owned/synthetic"}}},
 			"tools":    map[string]any{"search.symbols": map[string]any{"errors": map[string]any{}, "phase_censored": 0, "product_expired": 0}},
 			"attempts": []any{map[string]any{"tool": "search.symbols", "role": "workload", "outcome": "success", "code": 0, "logical_ms": 100}},
 		}},
+	}
+}
+
+func TestPairedChildCannotMasqueradeAsStandaloneCapacity(t *testing.T) {
+	cfg := inputs{CandidateRevision: strings.Repeat("a", 40), Hosts: map[string]string{"reference_linux": "synthetic-host"}}
+	input := runInput{Role: "candidate", HostClass: "reference_linux", Scenario: "load-1"}
+	for _, mutation := range []string{"paired-window", "null-paired-window", "coupled-phase", "coupled-workload"} {
+		t.Run(mutation, func(t *testing.T) {
+			raw := syntheticReport()
+			p := raw["phases"].([]any)[0].(map[string]any)
+			switch mutation {
+			case "paired-window":
+				p["gate"].(map[string]any)["paired_measurement_window"] = map[string]any{"group": map[string]any{"method": "coupled native back-to-back requests"}}
+			case "null-paired-window":
+				p["gate"].(map[string]any)["paired_measurement_window"] = nil
+			case "coupled-phase":
+				p["session_model"] = "coupled_native"
+			case "coupled-workload":
+				raw["workload"].(map[string]any)["session_model"] = "coupled_native"
+			}
+			data, err := json.Marshal(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r, err := decodeReport(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := validateReport(cfg, input, r); err == nil {
+				t.Fatal("coupled child accepted after envelope removed")
+			}
+		})
 	}
 }
 

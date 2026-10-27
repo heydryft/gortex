@@ -22,13 +22,21 @@ func validateScenario(name string, r report) error {
 		return errors.New(spec.missing)
 	}
 	var w struct {
-		Scenario  string `json:"scenario"`
-		Agents    int    `json:"agents"`
-		Editors   int    `json:"edit_agents"`
-		Worktrees int    `json:"linked_worktrees"`
+		Scenario     string `json:"scenario"`
+		Agents       int    `json:"agents"`
+		Editors      int    `json:"edit_agents"`
+		Worktrees    int    `json:"linked_worktrees"`
+		SessionModel string `json:"session_model"`
 	}
 	if json.Unmarshal(r.Workload, &w) != nil || w.Scenario != spec.wire || r.Phases[0].Name != spec.wire || w.Worktrees != spec.worktrees {
 		return errors.New("scenario does not match actual workload/phase")
+	}
+	model := "per_agent"
+	if spec.wire == "sweep" {
+		model = "per_operation_isolated"
+	}
+	if w.SessionModel != model || r.Phases[0].SessionModel != model {
+		return errors.New("unknown/coupled session identity cannot establish the frozen standalone workload")
 	}
 	switch spec.wire {
 	case "edit", "many-edit":

@@ -60,16 +60,17 @@ type attempt struct {
 }
 
 type phase struct {
-	Name      string                     `json:"name"`
-	Duration  float64                    `json:"duration_seconds"`
-	Gate      map[string]json.RawMessage `json:"gate"`
-	Tools     map[string]toolResult      `json:"tools"`
-	Attempts  []attempt                  `json:"attempts"`
-	Edit      distribution               `json:"edit_latency_ms"`
-	Metrics   map[string]metric          `json:"metrics"`
-	Errors    []string                   `json:"errors"`
-	NeverSeen *int                       `json:"never_visible"`
-	Censored  *int                       `json:"visibility_censored"`
+	SessionModel string                     `json:"session_model"`
+	Name         string                     `json:"name"`
+	Duration     float64                    `json:"duration_seconds"`
+	Gate         map[string]json.RawMessage `json:"gate"`
+	Tools        map[string]toolResult      `json:"tools"`
+	Attempts     []attempt                  `json:"attempts"`
+	Edit         distribution               `json:"edit_latency_ms"`
+	Metrics      map[string]metric          `json:"metrics"`
+	Errors       []string                   `json:"errors"`
+	NeverSeen    *int                       `json:"never_visible"`
+	Censored     *int                       `json:"visibility_censored"`
 }
 
 type report struct {
@@ -209,6 +210,9 @@ func validateReport(c inputs, input runInput, r report) error {
 		}
 	}
 	p := r.Phases[0]
+	if _, coupled := p.Gate["paired_measurement_window"]; coupled {
+		return errors.New("paired child report is coupled latency evidence, not a standalone capacity run")
+	}
 	if len(p.Errors) != 0 || p.Duration <= 0 || p.NeverSeen == nil || *p.NeverSeen != 0 || p.Censored == nil || *p.Censored != 0 {
 		return errors.New("incomplete, censored or failed phase")
 	}

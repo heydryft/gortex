@@ -132,8 +132,10 @@ Reports/table artifacts need effective retention of at least 90 days.
 
 The PR plan must include all five steps, comparable main measurements, existing
 micro-benchmark benchstat and a measured duration estimate. The frozen default
-120-second workload windows repeated three times already consume substantial
-time; do not assume the full lane fits 15 minutes. Any shorter smoke profile
+60-second duration is not a measured feasibility guarantee; the retained native
+read1 cohort used 120-second windows. Those 120-second read/edit windows repeated
+three times already consume substantial time; do not assume the full lane fits
+15 minutes. Any shorter smoke profile
 needs matching baselines and enough observations, not reused 120-second data.
 Nightly/release plans must preserve failed/censored runs, consecutive-night row
 history, floor-host scope restrictions and every daemon's stop/lock receipts.
