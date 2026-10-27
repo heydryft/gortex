@@ -17,13 +17,23 @@ import (
 // silently evade the runtime full/deferred catalogue census below.
 func TestDispatchClassCoversOptionalToolDeclarations(t *testing.T) {
 	fset := token.NewFileSet()
-	packages, err := parser.ParseDir(fset, ".", func(info os.FileInfo) bool {
-		return !strings.HasSuffix(info.Name(), "_test.go")
-	}, 0)
+	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
-	files := packages["mcp"].Files
+	files := make(map[string]*ast.File)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, entry.Name(), nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if file.Name.Name == "mcp" {
+			files[entry.Name()] = file
+		}
+	}
 	constants := map[string]string{}
 	for _, file := range files {
 		for _, declaration := range file.Decls {
