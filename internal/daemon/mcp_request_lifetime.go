@@ -251,7 +251,11 @@ var errMCPDispatchSaturated = errors.New("MCP dispatcher capacity is saturated")
 
 // mcpDispatchBusyError is a busy refusal from the dispatch queue: the budget
 // ran out, or the queue was full and the request did not wait.
-type mcpDispatchBusyError struct{ waited time.Duration }
+type mcpDispatchBusyError struct {
+	waited     time.Duration
+	retryAfter time.Duration
+	lane       MCPDispatchClass
+}
 
 func (e *mcpDispatchBusyError) Error() string { return errMCPDispatchSaturated.Error() }
 func (e *mcpDispatchBusyError) Unwrap() error { return errMCPDispatchSaturated }
