@@ -97,29 +97,42 @@ func TestDaemonCancelledSearchOnSixRepoFTSReturnsCapacityWithin100ms(t *testing.
 	client, err := daemon.DialTo(socket, daemon.Handshake{Mode: daemon.ModeMCP, Tools: "full", ToolsMode: "hide"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
-	require.NoError(t, client.Conn.SetDeadline(time.Now().Add(5*time.Second)))
+	require.NoError(t, client.Conn.SetDeadline(time.Now().Add(10*time.Second)))
 	require.NoError(t, client.WriteMCPFrame([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"cancel-test","version":"1"}}}`)))
 	initialized, err := client.ReadMCPFrame()
 	require.NoError(t, err)
 	require.Contains(t, string(initialized), `"result"`)
 	require.NoError(t, client.WriteMCPFrame([]byte(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)))
 	require.NoError(t, client.WriteMCPFrame([]byte(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_symbols","arguments":{"query":"needle sentinel","assist":false}}}`)))
+	type frameResult struct {
+		frame []byte
+		err   error
+	}
+	responseCh := make(chan frameResult, 1)
+	go func() {
+		frame, readErr := client.ReadMCPFrame()
+		responseCh <- frameResult{frame: frame, err: readErr}
+	}()
 	var queryContext context.Context
 	select {
 	case queryContext = <-held.started:
-	case <-time.After(time.Second):
+	case early := <-responseCh:
+		t.Fatalf("search_symbols returned before entering injected FTS: frame=%s error=%v", early.frame, early.err)
+	case <-time.After(5 * time.Second):
 		t.Fatal("search_symbols did not enter the injected native FTS query")
 	}
+	// Setup is not part of the cancellation bound. Full-suite coverage/race
+	// scheduling may delay query entry; time only after that entry is witnessed.
 	require.NoError(t, client.Conn.SetReadDeadline(time.Now().Add(100*time.Millisecond)))
 	canceledAt := time.Now()
 	require.NoError(t, client.WriteMCPFrame([]byte(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}}`)))
-	response, err := client.ReadMCPFrame()
-	require.NoError(t, err)
+	result := <-responseCh
+	require.NoError(t, result.err)
 	elapsed := time.Since(canceledAt)
 	require.Less(t, elapsed, 100*time.Millisecond)
-	require.Contains(t, string(response), `"code":-32800`)
-	require.Contains(t, string(response), `"delivery_unknown":true`)
-	require.Contains(t, string(response), `"retryable":false`)
+	require.Contains(t, string(result.frame), `"code":-32800`)
+	require.Contains(t, string(result.frame), `"delivery_unknown":true`)
+	require.Contains(t, string(result.frame), `"retryable":false`)
 	require.ErrorIs(t, queryContext.Err(), context.Canceled, "request context must reach the native FTS interface")
 	select {
 	case <-held.finished:
