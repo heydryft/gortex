@@ -245,3 +245,21 @@ func TestRenameReturnsTheDispatchSlotOnlyAtItsLastFile(t *testing.T) {
 	}
 	require.Equal(t, []bool{true}, lastWritten, "one release, once the last file is written")
 }
+
+func TestMutationReindexStateKeepsReceiptWhenSlowWaitAdmissionUnavailable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "edited.go")
+	ctx, cancel, intent, w, _, complete := primaryPublicationIntentFixture(t, nil, path)
+	defer cancel()
+	defer func() { complete(); intent.close() }()
+	committed := []byte("package fixture\nfunc Committed(){}\n")
+	require.NoError(t, os.WriteFile(path, committed, 0600))
+	s := &Server{watcher: w, mutationReindexWait: time.Minute}
+	s.releaseDispatchSlot = func(context.Context) bool { return false }
+	outcome := s.mutationReindexState(ctx, path)
+	require.True(t, outcome.Pending)
+	require.NotEmpty(t, outcome.Receipt)
+	require.NoError(t, outcome.Err, "slow lane admission cannot turn committed bytes into a retryable busy error")
+	actual, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, committed, actual)
+}

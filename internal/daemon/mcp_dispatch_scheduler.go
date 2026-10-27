@@ -75,6 +75,7 @@ type mcpScheduledGrant struct {
 	class     MCPDispatchClass
 	session   string
 	state     mcpGrantState
+	protocol  bool
 	cancelled bool
 }
 
@@ -378,12 +379,14 @@ func (g *mcpScheduledGrant) dropActiveLocked(now time.Time) {
 		panic("MCP dispatch grant lost its capacity token")
 	}
 	s.active[g.class]--
-	if g.class != MCPDispatchMutating {
-		s.nonMutating--
-	}
-	s.held[g.session]--
-	if s.held[g.session] == 0 {
-		delete(s.held, g.session)
+	if !g.protocol {
+		if g.class != MCPDispatchMutating {
+			s.nonMutating--
+		}
+		s.held[g.session]--
+		if s.held[g.session] == 0 {
+			delete(s.held, g.session)
+		}
 	}
 	s.noteDrainLocked(g.class, now)
 }
@@ -467,4 +470,21 @@ func (g *mcpScheduledGrant) releaseEarly() bool {
 	}
 	g.completeLocked(time.Now())
 	return true
+}
+
+// Protocol initialization/notifications preserve their historical full-cap,
+// unbudgeted wait. They are exempt from tool reservations/session limits, but
+// their completion still wakes queued tools and shares the same physical cap.
+func (s *mcpDispatchScheduler) acquireProtocol(ctx context.Context) (*mcpScheduledGrant, error) {
+	select {
+	case s.slots <- struct{}{}:
+		s.owner.mu.Lock()
+		s.active[MCPDispatchFast]++
+		grant := &mcpScheduledGrant{pool: s, class: MCPDispatchFast, state: mcpGrantActive, protocol: true}
+		s.owner.mu.Unlock()
+		return grant, nil
+	case <-ctx.Done():
+		signalMCPDispatchAdmission(ctx)
+		return nil, fmt.Errorf("%w: %w", errMCPDispatchNotStarted, ctx.Err())
+	}
 }

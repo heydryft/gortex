@@ -1265,6 +1265,8 @@ func (s *Server) beginBatchGraphRefresh(absPath string) mutationReindexOutcome {
 
 func (s *Server) waitBatchGraphReceipts(ctx context.Context, files []batchTransactionFile) {
 	deadline := time.Now().Add(s.mutationWaitDuration())
+	waitCtx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
 	var resumeIntent func()
 	for _, file := range files {
 		if file.ReindexReceipt == "" {
@@ -1294,7 +1296,13 @@ func (s *Server) waitBatchGraphReceipts(ctx context.Context, files []batchTransa
 			defer resumeIntent()
 			// Only waiting from here on: let other requests use this
 			// dispatch slot.
-			s.releaseDispatchSlotForWait(ctx)
+			if !s.releaseDispatchSlotForWait(waitCtx) {
+				return
+			}
+		}
+		remaining = time.Until(deadline)
+		if remaining <= 0 {
+			return
 		}
 		timer := time.NewTimer(remaining)
 		select {
@@ -1306,6 +1314,9 @@ func (s *Server) waitBatchGraphReceipts(ctx context.Context, files []batchTransa
 				}
 			}
 		case <-timer.C:
+			return
+		case <-waitCtx.Done():
+			timer.Stop()
 			return
 		}
 	}

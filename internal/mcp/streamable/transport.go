@@ -98,6 +98,10 @@ type Config struct {
 	// unresolved or local route falls through to Dispatcher. Pass
 	// nil for the single-server case (no servers.toml).
 	Router *daemon.Router
+	// DispatcherRoutesTools is used only by the daemon bridge, whose shared
+	// admission entry must cover remote calls as well as local calls. Standalone
+	// transports keep routing here; catalogue/status still use Router.
+	DispatcherRoutesTools bool
 
 	// AllowedOrigins, when non-empty, restricts which Origin
 	// header values the transport accepts on POST. Defends against
@@ -147,15 +151,16 @@ type InitializeHook func(ctx context.Context, state *SessionState)
 // the only shared mutable state and is itself goroutine-safe by
 // contract.
 type Transport struct {
-	dispatcher      Dispatcher
-	store           SessionStore
-	logger          *zap.Logger
-	router          *daemon.Router
-	allowedOrigins  map[string]struct{}
-	protocolVersion string
-	maxRequestBytes int64
-	sessionTTL      time.Duration
-	initializeHook  InitializeHook
+	dispatcher            Dispatcher
+	store                 SessionStore
+	logger                *zap.Logger
+	router                *daemon.Router
+	dispatcherRoutesTools bool
+	allowedOrigins        map[string]struct{}
+	protocolVersion       string
+	maxRequestBytes       int64
+	sessionTTL            time.Duration
+	initializeHook        InitializeHook
 
 	streamsMu sync.Mutex
 	streams   map[string]*serverStream
@@ -199,16 +204,17 @@ func New(cfg Config) *Transport {
 		allowed[strings.ToLower(o)] = struct{}{}
 	}
 	return &Transport{
-		dispatcher:      cfg.Dispatcher,
-		store:           store,
-		logger:          logger,
-		router:          cfg.Router,
-		allowedOrigins:  allowed,
-		protocolVersion: version,
-		maxRequestBytes: maxBytes,
-		sessionTTL:      sessionTTL,
-		initializeHook:  cfg.InitializeHook,
-		streams:         make(map[string]*serverStream),
+		dispatcher:            cfg.Dispatcher,
+		store:                 store,
+		logger:                logger,
+		router:                cfg.Router,
+		dispatcherRoutesTools: cfg.DispatcherRoutesTools,
+		allowedOrigins:        allowed,
+		protocolVersion:       version,
+		maxRequestBytes:       maxBytes,
+		sessionTTL:            sessionTTL,
+		initializeHook:        cfg.InitializeHook,
+		streams:               make(map[string]*serverStream),
 	}
 }
 
@@ -470,7 +476,7 @@ func (t *Transport) dispatchFrame(r *http.Request, state *SessionState, frame []
 	// Other frames (tools/list, ping, resources/*, prompts/*) flow
 	// to the in-process MCP server — federating them would change
 	// semantics.
-	if method == "tools/call" && t.router != nil {
+	if method == "tools/call" && t.router != nil && !t.dispatcherRoutesTools {
 		if out, status, ok := t.tryRouteToolCall(r, *state, frame); ok {
 			return out, status, nil
 		}

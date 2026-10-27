@@ -110,7 +110,11 @@ func (d *daemonStreamableDispatcher) Dispatch(ctx context.Context, frame []byte)
 		defer d.unbridge(sess.ID)
 		defer d.registry.RemoveByID(sess.ID)
 	}
-	return d.inner.Dispatch(ctx, sess, frame)
+	reply, err := daemon.DispatchMCPFrame(ctx, sess, frame, d.inner)
+	if busy := daemon.MCPDispatchBusyResponse(frame, err); len(busy) > 0 {
+		return busy, nil
+	}
+	return reply, err
 }
 
 // acquire returns the synthetic daemon.Session for a streamable
@@ -217,11 +221,12 @@ func buildDaemonStreamableHandler(disp daemon.MCPDispatcher, reg *daemon.Session
 	store := streamable.NewMemoryStore(sessionTTL)
 	wrapped := wrapStreamableStoreWithCleanup(store, bridge.onSessionEnded)
 	transport := streamable.New(streamable.Config{
-		Dispatcher: bridge,
-		Store:      wrapped,
-		Logger:     logger,
-		Router:     router,
-		SessionTTL: sessionTTL,
+		Dispatcher:            bridge,
+		Store:                 wrapped,
+		Logger:                logger,
+		Router:                router,
+		DispatcherRoutesTools: true,
+		SessionTTL:            sessionTTL,
 		InitializeHook: func(_ context.Context, state *streamable.SessionState) {
 			// Bridge the new streamable session into the daemon's
 			// session registry up-front so the daemon-status block
