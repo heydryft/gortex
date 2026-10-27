@@ -77,6 +77,10 @@ const (
 	// work; they are not a full patch wall or a split of its nested deep laps.
 	PublicationPatchExecutionStarted  PublicationPhase = "patch_execution_started"
 	PublicationPatchExecutionFinished PublicationPhase = "patch_execution_finished"
+	// The precise derived tail follows resolver and semantic work. These marks
+	// surround that actual call, not the wider point executor or its nested laps.
+	PublicationPatchDerivedStarted  PublicationPhase = "patch_derived_started"
+	PublicationPatchDerivedFinished PublicationPhase = "patch_derived_finished"
 	// PublicationAdmitted is the build acquiring the shared build lane.
 	PublicationAdmitted PublicationPhase = "admitted"
 	// PublicationPlanned is the build's file set and generation being fixed.

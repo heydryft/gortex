@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -401,7 +402,13 @@ func (idx *Indexer) incrementalWatcherPaths(root string, paths []string, mode in
 			idx.runIncrementalWatcherSemantic(result.DerivedInvalidation.Files)
 		}
 		idx.observeIncrementalCatchup("derived", result.DerivedInvalidation.Files)
+		if mode.publication != nil {
+			mode.publication.markAt(PublicationPatchDerivedStarted, time.Now())
+		}
 		idx.runStandaloneIncrementalDerivedPassesWithPrior(result.DerivedInvalidation, result.capabilityPrior)
+		if mode.publication != nil {
+			mode.publication.markAt(PublicationPatchDerivedFinished, time.Now())
+		}
 	}
 	topologyChanged = incrementalTopologyChanged(result)
 	return result, nil

@@ -28,7 +28,7 @@ the evidence for each key:
 | `not_applicable` | A graph-refresh/background record has no source-mutation acknowledgement. |
 | `invalid_order` | Observed offsets contradict the interval; the duration stays null. |
 
-The first projection measures only `disk_write` (`disk_write_started` to
+The acknowledgement projection measures `disk_write` (`disk_write_started` to
 `receipt_committed`) and `publish` (`receipt_committed` to `ticket_enqueued`)
 for MCP-edit timelines. The latter includes post-commit capture and ticket
 admission. It does not include waiting for the admitted publication to finish.
@@ -69,7 +69,20 @@ events, not a pure debounce/lane/gate measurement, a full patch wall, or a split
 of nested deep phases. No deep checkout-builder phase is relabelled onto the
 contextless canonical pipeline, and internal storm/atomic batches remain outside
 this observation. The numeric deep laps and full patch wall therefore remain
-unobserved; no phase-sum or CPU attribution acceptance follows from these events.
+unobserved except the precise derived tail described below; no phase-sum or CPU
+attribution acceptance follows from these events.
+
+The same optional attempt-local collector now follows the actual standalone or
+MultiWatcher point executor to its precise derived-tail call. The raw pair
+`patch_derived_started` to `patch_derived_finished` becomes `phases_ms.derived`
+only with observed admission and enclosing executor boundaries in monotonic
+order. Resolver, reference-fact, semantic and metadata work before that call
+is excluded. A branch that bypasses the derived call has no pair and remains
+null/`not_observed`; an actually reached zero-duration call is measured zero.
+The existing exact-winner absorption remains the only publication point, so
+failed/retried/stopped/coalesced sibling attempts cannot publish these spans.
+There is no ambient Indexer tracing state or additional history. The remaining
+deep laps still require their own boundaries and stay missing.
 
 ## Separate lifetimes
 
@@ -85,8 +98,10 @@ unobserved; no phase-sum or CPU attribution acceptance follows from these events
 - `publication_wall_ms`, when terminal boundaries exist, measures
   `received` to `ticket_completed` or `ticket_failed`. It is a receipt interval,
   not the acknowledgement time or the physical patch wall.
-- `publication_unattributed_ms` is that publication wall minus the two known,
-  disjoint intervals. Invalid ordering leaves it null. The residual contains
+- `publication_unattributed_ms` is that publication wall minus the measured,
+  disjoint disk/publish/derived intervals. The derived interval must be wholly
+  inside the admitted executor and publication window. Invalid ordering leaves
+  it null. The residual contains
   uninstrumented work and waits; it does not classify them. In particular it
   does not measure the acknowledgement's default reindex wait.
 

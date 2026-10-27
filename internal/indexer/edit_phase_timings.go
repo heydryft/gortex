@@ -3,7 +3,7 @@ package indexer
 // EditPhaseTimings projects duration evidence from a single immutable
 // publication snapshot. Missing measurements are null, never measured zero.
 // This is deliberately partial: publication timestamps do not yet delimit
-// dispatcher admission, the response/ack, or the individual patch laps.
+// dispatcher admission, the response/ack, or the complete patch-lap split.
 type EditPhaseTimings struct {
 	Milliseconds map[string]*float64 `json:"phases_ms"`
 	States       map[string]string   `json:"phase_states"`
@@ -69,6 +69,7 @@ func (s PublicationPhaseSnapshot) EditTimings() EditPhaseTimings {
 		out.Milliseconds["publish"], out.States["publish"] = editPhaseInterval(
 			offsets, PublicationReceiptCommitted, PublicationTicketEnqueued, s.Terminal)
 	}
+	out.Milliseconds["derived"], out.States["derived"] = editDerivedInterval(offsets, s.Terminal)
 	terminal := PublicationTicketCompleted
 	if _, failed := offsets[PublicationTicketFailed]; failed {
 		terminal = PublicationTicketFailed
@@ -84,7 +85,7 @@ func (s PublicationPhaseSnapshot) EditTimings() EditPhaseTimings {
 	// Only subtract disjoint, wholly contained measured intervals. An invalid
 	// order leaves the residual unknown; never clamp it to a plausible zero.
 	var measured float64
-	for _, name := range []string{"disk_write", "publish"} {
+	for _, name := range []string{"disk_write", "publish", "derived"} {
 		if out.States[name] == "invalid_order" || out.States[name] == "pending" {
 			return out
 		}
@@ -103,6 +104,43 @@ func (s PublicationPhaseSnapshot) EditTimings() EditPhaseTimings {
 		out.Window.PublicationUnattributedWallMS = &residual
 	}
 	return out
+}
+
+// Only an observed derived call inside the accepted canonical executor can
+// populate this lap. A pair without its ownership boundaries remains unknown;
+// contradictory order is refused, not clamped or charged to an earlier receipt.
+func editDerivedInterval(offsets map[PublicationPhase]int64, terminal bool) (*float64, string) {
+	ms, state := editPhaseInterval(offsets, PublicationPatchDerivedStarted, PublicationPatchDerivedFinished, terminal)
+	if state != "measured" {
+		return ms, state
+	}
+	var previous int64
+	missing := false
+	for _, phase := range []PublicationPhase{PublicationTicketEnqueued, PublicationPatchExecutionStarted,
+		PublicationPatchDerivedStarted, PublicationPatchDerivedFinished, PublicationPatchExecutionFinished} {
+		offset, ok := offsets[phase]
+		if !ok {
+			missing = true
+			continue
+		}
+		if offset < previous {
+			return nil, "invalid_order"
+		}
+		previous = offset
+	}
+	if terminal {
+		end := PublicationTicketCompleted
+		if _, failed := offsets[PublicationTicketFailed]; failed {
+			end = PublicationTicketFailed
+		}
+		if offset, ok := offsets[end]; ok && previous > offset {
+			return nil, "invalid_order"
+		}
+	}
+	if missing {
+		return nil, "not_observed"
+	}
+	return ms, state
 }
 
 func editPhaseInterval(offsets map[PublicationPhase]int64, start, end PublicationPhase, terminal bool) (*float64, string) {

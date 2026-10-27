@@ -36,7 +36,8 @@ func newPointPublication(t *testing.T, name string) *PublicationPhaseRecord {
 func requirePointExecution(t *testing.T, record *PublicationPhaseRecord, want bool) {
 	t.Helper()
 	offsets := phaseOffsets(record.Snapshot())
-	for _, phase := range []PublicationPhase{PublicationCycleStarted, PublicationPatchExecutionStarted, PublicationPatchExecutionFinished} {
+	for _, phase := range []PublicationPhase{PublicationCycleStarted, PublicationPatchExecutionStarted, PublicationPatchExecutionFinished,
+		PublicationPatchDerivedStarted, PublicationPatchDerivedFinished} {
 		if want {
 			require.Contains(t, offsets, phase)
 		} else {
@@ -44,7 +45,12 @@ func requirePointExecution(t *testing.T, record *PublicationPhaseRecord, want bo
 		}
 	}
 	if want {
-		require.LessOrEqual(t, offsets[PublicationPatchExecutionStarted], offsets[PublicationPatchExecutionFinished])
+		require.LessOrEqual(t, offsets[PublicationPatchExecutionStarted], offsets[PublicationPatchDerivedStarted])
+		require.LessOrEqual(t, offsets[PublicationPatchDerivedStarted], offsets[PublicationPatchDerivedFinished])
+		require.LessOrEqual(t, offsets[PublicationPatchDerivedFinished], offsets[PublicationPatchExecutionFinished])
+		timing := record.Snapshot().EditTimings()
+		require.Equal(t, "measured", timing.States["derived"])
+		require.NotNil(t, timing.Milliseconds["derived"])
 	}
 }
 
@@ -149,14 +155,14 @@ func TestCanonicalPublicationDiscardsRetryAttemptSpans(t *testing.T) {
 	})
 	var calls atomic.Int32
 	w.mutationRetryDelayFn = func(int) time.Duration { return time.Millisecond }
-	w.pointReindexRaw = func(file string, _ *PublicationStamps) (*IndexResult, error) {
+	w.pointReindexRaw = func(file string, stamps *PublicationStamps) (*IndexResult, error) {
 		if calls.Add(1) == 1 {
 			failedAt <- time.Now()
 			return nil, fmt.Errorf("busy: %w", context.DeadlineExceeded)
 		}
 		close(secondEntered)
 		<-releaseSecond
-		return idx.incrementalPointWatcherPath(idx.rootPath, file)
+		return idx.incrementalPointWatcherPathObserved(idx.rootPath, file, stamps)
 	}
 	origin := time.Now()
 	record := NewPublicationPhaseRecorder(1, 1).Begin("", "retry", PublicationSourceMCPEdit, origin)
@@ -183,10 +189,10 @@ func TestCanonicalPublicationDiscardsStoppedInFlightAttempt(t *testing.T) {
 			close(release)
 		}
 	})
-	w.pointReindexRaw = func(file string, _ *PublicationStamps) (*IndexResult, error) {
+	w.pointReindexRaw = func(file string, stamps *PublicationStamps) (*IndexResult, error) {
 		close(entered)
 		<-release
-		return idx.incrementalPointWatcherPath(idx.rootPath, file)
+		return idx.incrementalPointWatcherPathObserved(idx.rootPath, file, stamps)
 	}
 	record := newPointPublication(t, "stop")
 	ticket, err := w.EnqueueFileMutation(WithPublicationRecord(t.Context(), record), path)
@@ -242,4 +248,26 @@ func TestPointPublicationPreservesLaneContextAndNativeAbstention(t *testing.T) {
 	cancel()
 	require.ErrorIs(t, observed.Err(), context.Canceled)
 	require.Nil(t, phaseRecordFrom(observed), "a collector context must not live-publish into a receipt")
+}
+
+func TestCanonicalPublicationBypassedDerivedTailRemainsUnobserved(t *testing.T) {
+	path, idx, _ := pointPublicationFixture(t)
+	idx.deferGlobalPasses.Store(true)
+	stamps := &PublicationStamps{}
+	record := newPointPublication(t, "bypassed")
+	// This is the existing non-forced reconcile mode: even with a collector,
+	// its explicit deferred tail must not be fabricated as measured zero.
+	_, err := idx.incrementalWatcherPaths(idx.rootPath, []string{path}, incrementalPathMode{
+		detectDeletions: true,
+		publication:     stamps,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, nodeByName(t, idx, "edit.go", "After"))
+	record.Absorb(stamps)
+	offsets := phaseOffsets(record.Snapshot())
+	require.NotContains(t, offsets, PublicationPatchDerivedStarted)
+	require.NotContains(t, offsets, PublicationPatchDerivedFinished)
+	timing := record.Snapshot().EditTimings()
+	require.Nil(t, timing.Milliseconds["derived"])
+	require.Equal(t, "not_observed", timing.States["derived"])
 }

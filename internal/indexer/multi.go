@@ -3036,9 +3036,15 @@ func (mi *MultiIndexer) incrementalReindexRepoRawMode(repoPrefix string, paths [
 	mi.mu.Unlock()
 
 	idx.observeIncrementalCatchup("derived", result.DerivedInvalidation.Files)
+	if mode.publication != nil {
+		mode.publication.markAt(PublicationPatchDerivedStarted, time.Now())
+	}
 	mi.runIncrementalDerivedPassesWithPriorTopologyHeld(context.Background(), map[string]DerivedInvalidationPlan{
 		repoPrefix: result.DerivedInvalidation,
 	}, result.capabilityPrior)
+	if mode.publication != nil {
+		mode.publication.markAt(PublicationPatchDerivedFinished, time.Now())
+	}
 
 	topologyChanged = incrementalTopologyChanged(result)
 	return result, nil
