@@ -1,10 +1,85 @@
 package mcp
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/zzet/gortex/internal/daemon"
 )
+
+// Some handlers are registered only when an optional service is installed.
+// Inspect their real declarations too, so adding an optional tool cannot
+// silently evade the runtime full/deferred catalogue census below.
+func TestDispatchClassCoversOptionalToolDeclarations(t *testing.T) {
+	fset := token.NewFileSet()
+	packages, err := parser.ParseDir(fset, ".", func(info os.FileInfo) bool {
+		return !strings.HasSuffix(info.Name(), "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := packages["mcp"].Files
+	constants := map[string]string{}
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			group, ok := declaration.(*ast.GenDecl)
+			if !ok || group.Tok != token.CONST {
+				continue
+			}
+			for _, item := range group.Specs {
+				value := item.(*ast.ValueSpec)
+				for index, expression := range value.Values {
+					literal, ok := expression.(*ast.BasicLit)
+					if ok && literal.Kind == token.STRING && index < len(value.Names) {
+						constants[value.Names[index].Name], _ = strconv.Unquote(literal.Value)
+					}
+				}
+			}
+		}
+	}
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Body == nil {
+				continue
+			}
+			ast.Inspect(function.Body, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok || len(call.Args) == 0 {
+					return true
+				}
+				selector, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok || selector.Sel.Name != "NewTool" {
+					return true
+				}
+				name := ""
+				switch argument := call.Args[0].(type) {
+				case *ast.BasicLit:
+					name, _ = strconv.Unquote(argument.Value)
+				case *ast.Ident:
+					name = constants[argument.Name]
+					if argument.Name == "name" && function.Name.Name == "facadeToolDefinitionWithOperations" {
+						for _, facade := range facadeToolNames() {
+							if _, known := daemon.ToolDispatchClass(facade); !known {
+								t.Errorf("facade %q has no class", facade)
+							}
+						}
+						return true
+					}
+				}
+				if _, known := daemon.ToolDispatchClass(name); !known {
+					t.Errorf("tool declaration at %s has no class (resolved name %q)", fset.Position(call.Pos()), name)
+				}
+				return true
+			})
+		}
+	}
+}
 
 func TestDispatchClassCoversRegisteredAndFacadeTools(t *testing.T) {
 	for _, config := range []ToolPolicyConfig{{Preset: "full"}, {Preset: "core", Mode: "defer"}} {

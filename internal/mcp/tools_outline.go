@@ -41,7 +41,7 @@ func (s *Server) handleGetRepoOutline(ctx context.Context, req mcp.CallToolReque
 	// Every node / edge read below goes through the request's reader, so
 	// an overlay-active caller sees its own buffers. Hoisted once: the
 	// outline touches the reader from several sections.
-	reader := s.readerFor(ctx)
+	reader := graph.BindReadContext(s.readerFor(ctx), ctx)
 
 	var scoped []*graph.Node
 	var inScope map[string]bool

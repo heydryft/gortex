@@ -2570,10 +2570,10 @@ func (s *Server) handleFindDeadCode(ctx context.Context, req mcp.CallToolRequest
 		opts.SkipCrossRepoNodes = true
 	}
 
-	reader := s.readerFor(ctx)
+	reader := graph.BindReadContext(s.readerFor(ctx), ctx)
 	// The whole-store candidate read is bound to the request, so an
 	// abandoned call stops within one page of its deadline.
-	entries := analysis.FindDeadCode(graph.BindReadContext(reader, ctx), s.getProcesses(), nil, opts)
+	entries := analysis.FindDeadCode(reader, s.getProcesses(), nil, opts)
 
 	// dead_code reads the whole graph directly, bypassing the scoped-node
 	// accessors, so narrow its rows to the session workspace + optional
