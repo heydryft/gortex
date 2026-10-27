@@ -1057,6 +1057,9 @@ func (s *Server) handleEditFile(ctx context.Context, req mcp.CallToolRequest) (*
 		return mcp.NewToolResultError(fmt.Sprintf("could not write file: %v", writeErr)), nil
 	}
 
+	observeEditSourceEffect(ctx, true, true) // identical edits already refused above
+	observeEditSourceComplete(ctx)
+
 	sess := s.sessionFor(ctx)
 	sess.recordModified(relPath)
 
@@ -1134,6 +1137,7 @@ func (s *Server) handleWriteFile(ctx context.Context, req mcp.CallToolRequest) (
 	status := "created"
 	perm := os.FileMode(0o644)
 	fileExists := false
+	fileExistenceKnown := false
 	if info, err := os.Stat(absPath); err == nil {
 		if info.IsDir() {
 			return mcp.NewToolResultError(fmt.Sprintf("path %q is a directory", rawPath)), nil
@@ -1141,6 +1145,9 @@ func (s *Server) handleWriteFile(ctx context.Context, req mcp.CallToolRequest) (
 		status = "overwritten"
 		perm = info.Mode().Perm()
 		fileExists = true
+		fileExistenceKnown = true
+	} else {
+		fileExistenceKnown = errors.Is(err, os.ErrNotExist)
 	}
 
 	// Drift guard: when the caller observed the file at base_sha,
@@ -1166,8 +1173,11 @@ func (s *Server) handleWriteFile(ctx context.Context, req mcp.CallToolRequest) (
 	// Read the prior bytes once: the parse gate compares against them, and an
 	// evidence receipt digests them as before_sha256.
 	var priorContent []byte
+	priorContentKnown := fileExistenceKnown && !fileExists
 	if fileExists {
-		priorContent, _ = os.ReadFile(absPath)
+		var readErr error
+		priorContent, readErr = os.ReadFile(absPath)
+		priorContentKnown = readErr == nil
 	}
 	// Before anything is written, so a withheld receipt never leaves an
 	// overwritten file behind.
@@ -1219,6 +1229,9 @@ func (s *Server) handleWriteFile(ctx context.Context, req mcp.CallToolRequest) (
 		}
 		return mcp.NewToolResultError(fmt.Sprintf("could not write file: %v", writeErr)), nil
 	}
+
+	observeEditSourceReplacement(ctx, priorContent, contentBytes, fileExists, priorContentKnown)
+	observeEditSourceComplete(ctx)
 
 	sess := s.sessionFor(ctx)
 	sess.recordModified(relPath)

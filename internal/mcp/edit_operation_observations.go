@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"sync/atomic"
 
@@ -36,19 +37,29 @@ const (
 )
 
 // measuredSourceEdit deliberately follows the five requested edit surfaces,
-// including their facade spellings. Other tools and invalid operations never
+// including their facade spellings. Other tools and unresolved operations never
 // allocate a witness. Physical watcher patches are not logical editor stimuli.
 func measuredSourceEdit(req mcp.CallToolRequest) bool {
 	switch req.Params.Name {
 	case "write_file", "edit_file", "edit_symbol", "batch_edit", "move_symbol":
 		return true
-	case "edit":
-		switch req.GetString("operation", "") {
+	case "edit", "refactor":
+		// Match the facade's normalization/inference/defaults too: an
+		// omitted operation with a file/symbol/changes selector is callable.
+		operation := resolveFacadeOperationAlias(req.Params.Name, normalizeFacadeOperation(req.GetString("operation", "")))
+		if operation == "" {
+			operation = inferFacadeOperation(req.Params.Name, req.GetArguments())
+		}
+		if operation == "" {
+			operation = defaultFacadeOperation(req.Params.Name)
+		}
+		if req.Params.Name == "refactor" {
+			return operation == "move"
+		}
+		switch operation {
 		case "write", "file", "symbol", "batch":
 			return true
 		}
-	case "refactor":
-		return req.GetString("operation", "") == "move"
 	}
 	return false
 }
@@ -62,7 +73,18 @@ func editOperationFrom(ctx context.Context) *editOperationWitness {
 // Rollback/journal writes must not call it. Unchanged rewrites are excluded;
 // unavailable prior bytes remain unknown instead of being guessed equal/changed.
 func observeEditSourceEffect(ctx context.Context, changed, comparisonKnown bool) {
+	editOperationFrom(ctx).observeSourceEffect(changed, comparisonKnown)
+}
+
+func observeEditSourceReplacement(ctx context.Context, before, after []byte, existed, comparisonKnown bool) {
 	w := editOperationFrom(ctx)
+	if w == nil {
+		return // no extra byte comparison for an unobserved/raw caller
+	}
+	w.observeSourceEffect(!existed || !bytes.Equal(before, after), comparisonKnown)
+}
+
+func (w *editOperationWitness) observeSourceEffect(changed, comparisonKnown bool) {
 	if w == nil || (comparisonKnown && !changed) {
 		return
 	}
@@ -125,7 +147,7 @@ func (w *editOperationWitness) finish(result *mcp.CallToolResult, err error) {
 
 func (s *Server) observeEditOperationHandler(h mcpserver.ToolHandlerFunc) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (result *mcp.CallToolResult, err error) {
-		if !measuredSourceEdit(req) {
+		if s == nil || !measuredSourceEdit(req) {
 			return h(ctx, req)
 		}
 		if existing := editOperationFrom(ctx); existing != nil && existing.owner == &s.editOperations {

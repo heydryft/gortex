@@ -179,3 +179,56 @@ shrink and status reads never reset it. This is a lower bound on instantaneous
 physical peak and cannot be subtracted into a warm-run peak after startup.
 Daemon/MCP transport wiring and CPU/edit denominator coverage remain separate
 pending work; these store observations do not establish those acceptance gates.
+
+## Logical source-operation witness (transport pending)
+
+The MCP Server privately counts actual completion of the five measured source
+operations: `write_file`, `edit_file`, `edit_symbol`, `batch_edit`, and
+`move_symbol`, including their `edit`/`refactor` facade spellings and selector
+inference. These counters span that Server's sessions and views. The daemon's
+SharedServer serves its clients through the same Server; the counters are not
+per selected repository, per client or exclusive process-CPU attribution.
+
+A fixed request-local witness runs inside the actual handler execution, including
+when the deadline firewall has already answered the caller. A nested handler on
+the same Server borrows its owner; a distinct Server has distinct counters.
+Normal reads do not allocate a witness. Hooks only observe existing successful
+forward source-write/removal seams and already-read before images: no additional
+source reads, graph/store queries or process samples are introduced. A raw caller
+without a witness also skips the added byte comparison.
+
+| Private counter | Actual evidence |
+| --- | --- |
+| `completed` | At least one proven source change, the whole source operation committed, and the actual handler returned a nonnil, non-tool-error result without a Go error or typed committed-journal warning. This is source completion, not graph freshness or acknowledgement delivery. |
+| `committedWithError` | The complete source effect landed, but the actual handler result was nil/error/`IsError`, or a typed `committed`/`committed` batch receipt carried a journal warning. Committed bytes are not labelled unapplied. |
+| `failedAfterSourceEffect` | Forward source effects were observed, but the operation did not reach complete commit. This includes rollback and retained/conflicted partial effects. |
+| `rolledBack` | The subset above with typed batch `DiskStatus=rolled_back`. Rollback writes are not counted as another edit. |
+| `unknownSourceComparison` | An otherwise clean complete write lacked readable prior bytes, so a logical content change cannot be established. It is excluded from clean completed edits instead of guessing a no-op/change. |
+
+The first four outcome classes above are exclusive except for the named rollback
+subset. A successful filesystem call is positive effect evidence; absence of a
+witness does not prove that an opaque I/O error left every byte unchanged. Existing
+typed disk/transaction verdicts remain authoritative. Failed-source counts cover
+observed forward effects, not a new filesystem failure-detection mechanism.
+
+The original batch handler performs physical writes, directory durability and
+journal publication synchronously. A caller can stop waiting while that handler
+continues its deliberately non-cancellable commit. Only that original new
+transaction owns source effects; duplicate/status/recovery replies own no
+new source operation. The typed Status/DiskStatus distinguish aborted, rolled
+back or conflicted outcomes from committed source plus a terminal-journal warning;
+`err == nil` and a non-tool-error response alone are insufficient. Multi-file
+batch and move writes contribute one logical operation, not one per file.
+
+Idempotency replay, status-only calls, dry runs, unchanged rewrites and refusals
+before source effects do not increment completed edits. Native editor stimuli
+remain harness-owned: filesystem events/coalesced watcher patches cannot identify
+a logical native edit and are never added to these MCP counters.
+
+No CPU endpoint, transport field, reset API or CPU-per-edit average is added by
+this slice. A later endpoint must pair raw process CPU/count baselines within
+one Server epoch, expose a stable count bracket and unavailable/zero-denominator
+states, and label background/other-session work honestly. Instrumentation cost,
+real client read-back, complete phase sums and the full workload matrix remain
+unmeasured acceptance work. Source tests are pending execution until an explicit
+validation slot; protocol fixtures are not installed-client evidence.

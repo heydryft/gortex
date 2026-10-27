@@ -23,11 +23,21 @@ func editOperationRequest(name, operation string) mcp.CallToolRequest {
 func TestEditOperationMeasuredSurfaces(t *testing.T) {
 	for _, pair := range [][2]string{
 		{"write_file", ""}, {"edit_file", ""}, {"edit_symbol", ""}, {"batch_edit", ""}, {"move_symbol", ""},
-		{"edit", "write"}, {"edit", "file"}, {"edit", "symbol"}, {"edit", "batch"}, {"refactor", "move"},
+		{"edit", "write"}, {"edit", "file"}, {"edit", "symbol"}, {"edit", "batch"}, {"refactor", "move"}, {"edit", " FILE "}, {"edit", ""},
 	} {
 		require.True(t, measuredSourceEdit(editOperationRequest(pair[0], pair[1])), "%v", pair)
 	}
-	for _, pair := range [][2]string{{"read", "source"}, {"change", "receipt"}, {"mutation_status", ""}, {"edit", "docs"}, {"refactor", "rename"}, {"edit", ""}} {
+	for _, args := range []map[string]any{
+		{"target": map[string]any{"file": "a.go"}, "content": "new"},
+		{"target": map[string]any{"file": "a.go"}, "match": "old", "replacement": "new"},
+		{"target": map[string]any{"symbol": "a.go::A"}},
+		{"changes": []any{map[string]any{"op": "edit_file"}}},
+	} {
+		req := editOperationRequest("edit", "")
+		req.Params.Arguments = args
+		require.True(t, measuredSourceEdit(req), "facade inference must retain operation ownership")
+	}
+	for _, pair := range [][2]string{{"read", "source"}, {"change", "receipt"}, {"mutation_status", ""}, {"edit", "docs"}, {"refactor", "rename"}} {
 		require.False(t, measuredSourceEdit(editOperationRequest(pair[0], pair[1])), "%v", pair)
 	}
 }

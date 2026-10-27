@@ -3184,6 +3184,9 @@ func (s *Server) handleEditSymbol(ctx context.Context, req mcp.CallToolRequest) 
 		}
 		return mcp.NewToolResultError(fmt.Sprintf("could not write file: %v", writeErr)), nil
 	}
+	observeEditSourceEffect(ctx, true, true) // identical symbol edits already refused above
+	observeEditSourceComplete(ctx)
+
 	sess := s.sessionFor(ctx)
 	sess.recordModified(node.FilePath)
 	sess.recordSymbol(id)

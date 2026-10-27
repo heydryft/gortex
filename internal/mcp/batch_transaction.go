@@ -1017,7 +1017,7 @@ func applyBatchPlans(plans []plannedBatchEdit, buffers map[string]*batchFileBuff
 	return results, -1, nil
 }
 
-func (s *Server) runBatchTransaction(ctx context.Context, edits []batchEditItem, requestedID string) (batchTransactionReceipt, error) {
+func (s *Server) runBatchTransaction(ctx context.Context, edits []batchEditItem, requestedID string) (result batchTransactionReceipt, retErr error) {
 	fingerprint := batchEditFingerprint(edits)
 	transactionID, err := normalizeBatchTransactionID(requestedID, fingerprint)
 	if err != nil {
@@ -1038,6 +1038,14 @@ func (s *Server) runBatchTransaction(ctx context.Context, edits []batchEditItem,
 		return state.snapshot(), nil
 	}
 
+	// Only the original new transaction owns source effects. Duplicate/status
+	// and recovery replies above must not count another logical edit. This
+	// defer stays on the actual handler, including non-cancellable commits
+	// that finish after its caller has received a deadline response.
+	defer func() {
+		committed := result.Status == "committed" && result.DiskStatus == "committed"
+		observeEditSourceTerminal(ctx, committed, committed && (result.Error != "" || retErr != nil), result.DiskStatus == "rolled_back")
+	}()
 	receipt := state.snapshot()
 	plans := s.planBatchTransaction(ctx, edits, true)
 	for i, plan := range plans {
@@ -1154,6 +1162,7 @@ func (s *Server) runBatchTransaction(ctx context.Context, edits []batchEditItem,
 			message := fmt.Sprintf("could not commit %s: %v", buffer.relPath, commitErr)
 			return finishCommitFailure(buffer.relPath, message), nil
 		}
+		observeEditSourceReplacement(ctx, buffer.original, buffer.content, buffer.existsBefore, true)
 	}
 	for _, path := range orderedPaths {
 		buffer := buffers[path]
@@ -1167,12 +1176,14 @@ func (s *Server) runBatchTransaction(ctx context.Context, edits []batchEditItem,
 			message := fmt.Sprintf("could not commit %s: %v", buffer.relPath, commitErr)
 			return finishCommitFailure(buffer.relPath, message), nil
 		}
+		observeEditSourceEffect(ctx, buffer.existsBefore, true)
 	}
 	if syncErr := s.syncBatchDirectories(batchPathDirectories(orderedPaths)...); syncErr != nil {
 		failedPath := buffers[orderedPaths[len(orderedPaths)-1]].relPath
 		message := "could not persist committed files: " + syncErr.Error()
 		return finishCommitFailure(failedPath, message), nil
 	}
+	observeEditSourceComplete(ctx) // all forward effects and directory durability completed
 
 	for i := range receipt.Results {
 		receipt.Results[i].Status = "applied"

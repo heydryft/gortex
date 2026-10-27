@@ -376,14 +376,18 @@ func (s *Server) handleMoveSymbol(ctx context.Context, req mcp.CallToolRequest) 
 	if err := writeMoveFile(tgtAbs, newTgtContent); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	observeEditSourceReplacement(ctx, tgtContent, newTgtContent, tgtExists, true)
 	if err := writeMoveFile(srcAbs, newSrcContent); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	observeEditSourceReplacement(ctx, srcContent, newSrcContent, true, true)
 	for _, ce := range callerEdits {
 		if err := writeMoveFile(ce.absPath, ce.newContent); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		observeEditSourceReplacement(ctx, ce.origContent, ce.newContent, true, true)
 	}
+	observeEditSourceComplete(ctx)
 
 	// Re-index every touched file so the graph picks up the new location.
 	sess := s.sessionFor(ctx)
