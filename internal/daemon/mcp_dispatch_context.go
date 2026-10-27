@@ -16,6 +16,10 @@ type mcpDispatchRequestInfo struct {
 
 var mcpDispatchConnectionSequence atomic.Uint64
 
+func isMCPInitializationRequest(method string) bool {
+	return method == "initialize" || method == "server/discover"
+}
+
 func withMCPDispatchRequest(ctx context.Context, info mcpDispatchRequestInfo) context.Context {
 	return context.WithValue(ctx, mcpDispatchRequestContextKey{}, info)
 }
@@ -39,7 +43,7 @@ func prepareMCPDispatchContext(ctx context.Context, session string, envelope mcp
 	if envelope.Method != "tools/call" {
 		class = MCPDispatchFast
 	}
-	ctx = withMCPDispatchRequest(ctx, mcpDispatchRequestInfo{class: class, session: session, protocol: envelope.Method == "initialize" || len(envelope.ID) == 0})
+	ctx = withMCPDispatchRequest(ctx, mcpDispatchRequestInfo{class: class, session: session, protocol: isMCPInitializationRequest(envelope.Method) || len(envelope.ID) == 0 && envelope.Method != ""})
 	if isLongLivedMCPRequest(envelope.Method) {
 		ctx = withMCPDispatchUnbounded(ctx)
 	}
