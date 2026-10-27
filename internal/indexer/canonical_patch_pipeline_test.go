@@ -45,7 +45,7 @@ func TestCanonicalPatchRealChunksAggregateWithoutChargingInterleavedWork(t *test
 	_, err := idx.Index(root)
 	require.NoError(t, err)
 	for i, path := range paths {
-		bumpMtime(t, path, fmt.Sprintf("package p\nfunc After%02d() {}\n", i))
+		bumpMtime(t, path, fmt.Sprintf("package p\nfunc After%02d() { After%02d() }\n", i, (i+1)%len(paths)))
 	}
 	r, s := beginRealPatchObservation(t)
 	result, err := idx.incrementalWatcherPaths(root, paths, incrementalPathMode{
@@ -54,7 +54,10 @@ func TestCanonicalPatchRealChunksAggregateWithoutChargingInterleavedWork(t *test
 	require.NoError(t, err)
 	require.Empty(t, result.FailedFiles)
 	for i, path := range paths {
-		require.NotNil(t, nodeByName(t, idx, filepath.Base(path), fmt.Sprintf("After%02d", i)))
+		caller := nodeByName(t, idx, filepath.Base(path), fmt.Sprintf("After%02d", i))
+		next := (i + 1) % len(paths)
+		callee := nodeByName(t, idx, filepath.Base(paths[next]), fmt.Sprintf("After%02d", next))
+		require.Equal(t, callee.ID, callEdge(t, idx, caller.ID).To, "the actual deferred resolver must bind the new cross-file call")
 	}
 	snapshot := finishRealPatchObservation(r, s)
 	evidence := snapshot.patchLaps
