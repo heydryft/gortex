@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,12 +24,17 @@ func TestWALReclaimFinalCauseSurvivesDisappearingDemand(t *testing.T) {
 			require.NoError(t, err)
 			defer ckpt.Close()
 			before := s.WALReclaimStats()
-			oldHook, oldHold := walResetCheckpointConnObserver, walReclaimResetHold
-			walReclaimResetHold = 2 * time.Second // setup allowance; yield cadence/policy unchanged
-			defer func() { walResetCheckpointConnObserver, walReclaimResetHold = oldHook, oldHold }()
+			oldHook := walResetCheckpointConnObserver
+			defer func() { walResetCheckpointConnObserver = oldHook }()
 			entered := make(chan context.Context, 1)
 			beforeReturn := make(chan func(), 1)
+			var resetCalls atomic.Int32
 			walResetCheckpointConnObserver = func(ctx context.Context, _ *sql.Conn) {
+				if resetCalls.Add(1) != 1 {
+					// Record unexpected reentry without parking on a second
+					// test token. The completion oracle below must reject it.
+					return
+				}
 				entered <- ctx
 				<-ctx.Done()
 				// Remove real demand BEFORE the attempt consumes the cancelled
@@ -59,8 +65,11 @@ func TestWALReclaimFinalCauseSurvivesDisappearingDemand(t *testing.T) {
 				}
 			}()
 			go func() {
+				// readerWait=0 selects the supported terminal closed-gate
+				// path. An ordinary open-gate round may legitimately retry
+				// after the demand disappears, even within one attempt.
 				done <- s.reclaimWALOnce(walReclaimConfig{thresholdBytes: 1 << 30,
-					drainDeadline: time.Second, truncateBudget: walReclaimTruncateBudget, readerWait: time.Second}, ckpt, path+"-wal")
+					drainDeadline: time.Second, truncateBudget: walReclaimTruncateBudget}, ckpt, path+"-wal")
 			}()
 			var resetCtx context.Context
 			select {
@@ -113,6 +122,7 @@ func TestWALReclaimFinalCauseSurvivesDisappearingDemand(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("cancelled reclaim did not finish")
 			}
+			require.EqualValues(t, 1, resetCalls.Load(), "unexpected reset reentry is not a terminal cancelled attempt")
 			require.NotEqual(t, walReclaimReset, result.outcome)
 			require.Zero(t, s.writeIntents.Load())
 			require.Zero(t, s.writeMu.waiting())
