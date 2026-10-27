@@ -68,9 +68,8 @@ accepted runnable attempt, which may follow retries. These are outer execution
 events, not a pure debounce/lane/gate measurement, a full patch wall, or a split
 of nested deep phases. No deep checkout-builder phase is relabelled onto the
 contextless canonical pipeline, and internal storm/atomic batches remain outside
-this observation. The numeric deep laps and full patch wall therefore remain
-unobserved except the precise derived tail described below; no phase-sum or CPU
-attribution acceptance follows from these events.
+this observation. Debounce, repository-lane wait and the full patch wall remain unobserved;
+no phase-sum or CPU attribution acceptance follows from these events.
 
 The same optional attempt-local collector now follows the actual standalone or
 MultiWatcher point executor to its precise derived-tail call. The raw pair
@@ -81,8 +80,51 @@ is excluded. A branch that bypasses the derived call has no pair and remains
 null/`not_observed`; an actually reached zero-duration call is measured zero.
 The existing exact-winner absorption remains the only publication point, so
 failed/retried/stopped/coalesced sibling attempts cannot publish these spans.
-There is no ambient Indexer tracing state or additional history. The remaining
-deep laps still require their own boundaries and stay missing.
+There is no ambient Indexer tracing state or additional history.
+
+## Canonical cumulative patch laps
+
+A bound canonical attempt also collects a fixed set of scalar totals and
+observation counts, without retaining per-file spans or a tracing registry.
+Repeated chunks and same/cross-repository resolver calls contribute their actual
+elapsed intervals. First-to-last timestamp envelopes are not used as a sum.
+
+| Lap | Actual observed boundary |
+| --- | --- |
+| `gate_wait` | The call to `reach.BeginTopologyMutation`, until acquisition returns. |
+| `patch_parse` | Each chunk's preparation: source read, parse admission, extraction and fingerprint preparation; excludes prior-graph loading. |
+| `apply` | Deletion and staged graph application, explicitly split before/after the search refresh block. |
+| `search_lap` | The explicit search/FTS refresh block; structural FTS deletion stays with graph replacement in `apply`. |
+| `resolve` | Actual deferred same-repository/name and cross-repository resolver calls; intervening dataflow, reference-fact and semantic work is excluded. |
+| `mtimes` | Source-version receipt validation/mtime persistence, deletion-mtime pruning and MultiIndexer metadata publication. |
+| `derived` | The precise derived-tail call above. |
+
+The collector rejects overlap, inverted clocks, incomplete begin/end counts,
+and intervals outside the original admission/executor/terminal window. Its
+scalar derived interval must match the existing raw derived pair, so they cannot
+be counted twice or conceal an overlapping subtotal. The legacy
+`publication_phases` JSON fields stay unchanged; its first-wins timeline alone
+cannot reconstruct a repeated lap. `phases_ms` is projected from the same
+immutable in-process receipt snapshot with its accepted scalar evidence.
+
+A reached zero-duration operation is measured zero. A bypassed or unobserved
+operation remains null. The legacy combined parse/apply fallback makes the full
+`patch_parse`, `apply` and `search_lap` totals unavailable for that attempt,
+including any earlier measured chunks; it is not assigned a fabricated split.
+Other independently proven laps remain available. Uninstrumented transitions,
+contract work, semantic/dataflow work and notification costs stay in the
+publication residual. This does not establish complete 5% sum coverage.
+
+For observed canonical attempts, the existing `graph patch complete` line adds
+`attempt_<lap>_ms`, `attempt_<lap>_state`, `attempt_<lap>_count` and the original
+`attempt_ticket`. Its `patch_lap_scope` is
+`physical_attempt_before_receipt_validation`: the log happens before final
+watcher winner validation and does not claim that a superseded attempt's timing
+will be published into any receipt. The encoder formats an immutable copy and
+never samples clocks or a live collector. Native/unobserved patches keep their
+original log fields, with no new timing snapshot, phase clock or encoder.
+No extra patch line is emitted. Total instrumentation overhead remains
+unmeasured and needs the prescribed no-regression runs.
 
 ## Separate lifetimes
 
@@ -99,8 +141,8 @@ deep laps still require their own boundaries and stay missing.
   `received` to `ticket_completed` or `ticket_failed`. It is a receipt interval,
   not the acknowledgement time or the physical patch wall.
 - `publication_unattributed_ms` is that publication wall minus the measured,
-  disjoint disk/publish/derived intervals. The derived interval must be wholly
-  inside the admitted executor and publication window. Invalid ordering leaves
+  disjoint acknowledgement and observed patch-lap intervals. Patch intervals
+  must be wholly inside the admitted executor and publication window. Invalid ordering leaves
   it null. The residual contains
   uninstrumented work and waits; it does not classify them. In particular it
   does not measure the acknowledgement's default reindex wait.

@@ -2878,13 +2878,26 @@ func (w *Watcher) patchGraphWithReceiptStateRawModern(
 	default:
 	}
 	if w.logger != nil {
-		w.logger.Info("graph patch complete",
-			zap.String("file", path),
-			zap.String("kind", string(kind)),
-			zap.String("delta_class", classification),
-			zap.Int64("ms", ev.DurationMs),
-			zap.Int("incident_edges", priorEdges),
-			zap.Inline(patchWriteLog{split: idx.writeCounterMark().Since(writes)}))
+		if laps, observed := PublicationStampsFrom(ctx).snapshotPatchLog(); observed {
+			w.logger.Info("graph patch complete",
+				zap.String("file", path),
+				zap.String("kind", string(kind)),
+				zap.String("delta_class", classification),
+				zap.Int64("ms", ev.DurationMs),
+				zap.Int("incident_edges", priorEdges),
+				zap.Inline(patchWriteLog{split: idx.writeCounterMark().Since(writes)}),
+				zap.Inline(laps))
+		} else {
+			// Keep the ordinary native log path free of new timing snapshots,
+			// field slices or lazy encoders. Only a bound attempt opts in.
+			w.logger.Info("graph patch complete",
+				zap.String("file", path),
+				zap.String("kind", string(kind)),
+				zap.String("delta_class", classification),
+				zap.Int64("ms", ev.DurationMs),
+				zap.Int("incident_edges", priorEdges),
+				zap.Inline(patchWriteLog{split: idx.writeCounterMark().Since(writes)}))
+		}
 	}
 	if superseded {
 		// Every core write of the patch landed before the newer generation
