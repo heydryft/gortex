@@ -29,7 +29,7 @@ var metricSpecs = map[string]metricSpec{
 	"oom_kills":             {unit: "count", axis: "safety", everyRepeat: true},
 	"wal_peak_mib":          {unit: "MiB", axis: "disk"},
 	"cold_written_mib":      {unit: "MiB", axis: "disk"},
-	"idle_memory_mib":       {unit: "MiB", axis: "memory"},
+	"idle_memory_2s_mib":    {unit: "MiB", axis: "memory"},
 	"peak_memory_mib":       {unit: "MiB", axis: "memory"},
 	"worktree_memory_mib":   {unit: "MiB", axis: "memory"},
 	"edit_written_mib":      {unit: "MiB/edit", axis: "disk"},
@@ -46,6 +46,8 @@ var metricSpecs = map[string]metricSpec{
 	"repo_not_tracked":      {unit: "count", axis: "safety", everyRepeat: true, missing: "startup polling does not retain a complete configured-repo/worktree refusal census"},
 	"first_ok_after_ready":  {unit: "s", axis: "timing", missing: "restart queryability measures launch-to-queryable, not ready-to-first-OK"},
 	"idle_written_mib_min":  {unit: "MiB/min", axis: "disk", missing: "report-v1 lacks an idle-write observation interval"},
+	"idle_memory_60s_mib":   {unit: "MiB", axis: "memory", missing: "idle_after_2s is not a 60-second post-enrichment footprint observation"},
+	"cold_go_sys_peak_mib":  {unit: "MiB", axis: "memory", missing: "daemon status Go Sys snapshots do not establish cold-window peak Go Sys"},
 }
 
 type scenarioSpec struct {

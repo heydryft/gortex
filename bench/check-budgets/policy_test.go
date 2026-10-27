@@ -53,11 +53,11 @@ func TestBudgetPolicyGuardAllowancesHaveExplicitApplicability(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, bad := range map[string]string{
-		"missing null target": strings.ReplaceAll(data, "target: null, ", ""),
-		"fake absolute":       strings.ReplaceAll(data, "target: null", "target: 500"),
-		"wrong scenario":      strings.Replace(data, "scenario: loadedit-32", "scenario: loadedit-4", 1),
-		"wrong metric":        strings.Replace(data, "metric: peak_memory_mib", "metric: idle_memory_mib", 1),
-		"repeated allowance":  strings.ReplaceAll(data, "allowance: [pending_projection]", "allowance: [pending_projection, pending_projection]"),
+		"missing null target":     strings.ReplaceAll(data, "target: null, ", ""),
+		"nonfinite future target": strings.ReplaceAll(data, "target: null", "target: .inf"),
+		"wrong scenario":          strings.Replace(data, "scenario: loadedit-32", "scenario: loadedit-4", 1),
+		"wrong metric":            strings.Replace(data, "metric: peak_memory_mib", "metric: idle_memory_2s_mib", 1),
+		"repeated allowance":      strings.ReplaceAll(data, "allowance: [pending_projection]", "allowance: [pending_projection, pending_projection]"),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := loadPolicy([]byte(bad)); err == nil {

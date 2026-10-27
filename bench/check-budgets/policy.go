@@ -50,6 +50,7 @@ type budget struct {
 
 var releasePattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
 var revisionPattern = regexp.MustCompile(`^[a-f0-9]{40}$`)
+var planPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 const shippedRevision = "defa9f8e7a670792b5b693744d88488f741a8160"
 
@@ -66,8 +67,8 @@ func loadPolicy(data []byte) (policy, error) {
 	if err := d.Decode(&extra); err != io.EOF {
 		return p, errors.New("budgets must contain exactly one YAML document")
 	}
-	// In particular a guard must spell target:null, rather than accidentally
-	// omitting a required field. No aliases or YAML merge-key defaults for rows.
+	// A not-yet-assigned absolute target is explicitly null, never accidentally
+	// omitted. No aliases or YAML merge-key defaults for rows.
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return p, err
@@ -160,7 +161,7 @@ func validateBudget(b budget, allowances map[string]allowance) error {
 	if _, ok := scenarioSpecs[b.Scenario]; !ok {
 		return fmt.Errorf("unknown scenario %s", b.Scenario)
 	}
-	if !slices.Contains([]string{"reference_linux", "reference_mac", "large_mac"}, b.HostClass) || !releasePattern.MatchString(b.OwningRelease) {
+	if !slices.Contains([]string{"reference_linux", "reference_mac", "large_mac"}, b.HostClass) || (!releasePattern.MatchString(b.OwningRelease) && !(b.Mode == "guard" && b.OwningRelease == "unassigned")) {
 		return errors.New("invalid host class or owning release")
 	}
 	if !slices.Contains([]string{"le", "lt", "ge", "eq"}, b.Compare) || len(b.Lane) == 0 {
@@ -173,12 +174,12 @@ func validateBudget(b budget, allowances map[string]allowance) error {
 	}
 	switch b.Mode {
 	case "block":
-		if b.Target == nil || !finiteNonnegative(*b.Target) || len(b.Allowance) != 0 {
-			return errors.New("block needs an absolute nonnegative target and no allowance")
+		if b.Target == nil || !finiteNonnegative(*b.Target) {
+			return errors.New("block needs an absolute nonnegative target")
 		}
 	case "guard":
-		if b.Target != nil || b.Compare != "le" {
-			return errors.New("guard needs target:null and comparison le")
+		if (b.Target != nil && !finiteNonnegative(*b.Target)) || b.Compare != "le" {
+			return errors.New("guard needs a finite future target or explicit null, and comparison le")
 		}
 	default:
 		return errors.New("mode must be block or guard")
