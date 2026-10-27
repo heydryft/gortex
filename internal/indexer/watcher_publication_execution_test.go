@@ -149,7 +149,7 @@ func TestCanonicalPublicationDiscardsRetryAttemptSpans(t *testing.T) {
 	})
 	var calls atomic.Int32
 	w.mutationRetryDelayFn = func(int) time.Duration { return time.Millisecond }
-	w.pointReindexRaw = func(file string) (*IndexResult, error) {
+	w.pointReindexRaw = func(file string, _ *PublicationStamps) (*IndexResult, error) {
 		if calls.Add(1) == 1 {
 			failedAt <- time.Now()
 			return nil, fmt.Errorf("busy: %w", context.DeadlineExceeded)
@@ -183,7 +183,7 @@ func TestCanonicalPublicationDiscardsStoppedInFlightAttempt(t *testing.T) {
 			close(release)
 		}
 	})
-	w.pointReindexRaw = func(file string) (*IndexResult, error) {
+	w.pointReindexRaw = func(file string, _ *PublicationStamps) (*IndexResult, error) {
 		close(entered)
 		<-release
 		return idx.incrementalPointWatcherPath(idx.rootPath, file)
@@ -212,7 +212,7 @@ func TestCanonicalPublicationDiscardsFailedExecutionSpans(t *testing.T) {
 	path, _, w := pointPublicationFixture(t)
 	failure := errors.New("point executor rejected the patch")
 	var calls atomic.Int32
-	w.pointReindexRaw = func(string) (*IndexResult, error) {
+	w.pointReindexRaw = func(string, *PublicationStamps) (*IndexResult, error) {
 		calls.Add(1)
 		return nil, failure
 	}

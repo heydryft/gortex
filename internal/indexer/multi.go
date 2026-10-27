@@ -2896,9 +2896,14 @@ func (mi *MultiIndexer) incrementalDiscoverRepoRaw(repoPrefix string, paths []st
 // full shared resolver, semantic, metadata, and precise derived tail without
 // submitting back into a coordinated public API.
 func (mi *MultiIndexer) incrementalPointRepoRaw(repoPrefix, path string) (*IndexResult, error) {
+	return mi.incrementalPointRepoRawObserved(repoPrefix, path, nil)
+}
+
+func (mi *MultiIndexer) incrementalPointRepoRawObserved(repoPrefix, path string, stamps *PublicationStamps) (*IndexResult, error) {
 	return mi.incrementalReindexRepoRawMode(repoPrefix, []string{path}, incrementalPathMode{
 		detectDeletions:    true,
 		forceExplicitFiles: true,
+		publication:        stamps,
 	})
 }
 

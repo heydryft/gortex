@@ -7012,6 +7012,10 @@ type incrementalPathMode struct {
 	forceExplicitFiles        bool
 	surfaceFirstVersionChange bool
 	exactPointSemantic        bool
+	// publication carries only a canonical point attempt's local collector.
+	// Existing batch/reconcile/direct callers leave it nil. No live receipt or
+	// mutable Indexer tracing state is installed by this per-call observation.
+	publication *PublicationStamps
 }
 
 // indexedFilesAbsentFromDisk returns the repo-relative keys of files the graph

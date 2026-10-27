@@ -354,9 +354,14 @@ func (idx *Indexer) incrementalEvictWatcherPath(path string) (nodesRemoved, edge
 // complete resolver/semantic/derived tail without re-entering a public
 // coordinated API.
 func (idx *Indexer) incrementalPointWatcherPath(root, path string) (*IndexResult, error) {
+	return idx.incrementalPointWatcherPathObserved(root, path, nil)
+}
+
+func (idx *Indexer) incrementalPointWatcherPathObserved(root, path string, stamps *PublicationStamps) (*IndexResult, error) {
 	return idx.incrementalWatcherPaths(root, []string{path}, incrementalPathMode{
 		detectDeletions:    true,
 		forceExplicitFiles: true,
+		publication:        stamps,
 	})
 }
 

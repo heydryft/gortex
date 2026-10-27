@@ -251,8 +251,8 @@ func (mw *MultiWatcher) createWatcher(prefix string, cfg config.WatchConfig) err
 	w.explicitReindexRaw = func(paths []string) (*IndexResult, error) {
 		return mw.multi.incrementalReindexRepoRawMode(prefix, paths, incrementalPathMode{detectDeletions: true, forceExplicitFiles: true})
 	}
-	w.pointReindexRaw = func(filePath string) (*IndexResult, error) {
-		return mw.multi.incrementalPointRepoRaw(prefix, filePath)
+	w.pointReindexRaw = func(filePath string, stamps *PublicationStamps) (*IndexResult, error) {
+		return mw.multi.incrementalPointRepoRawObserved(prefix, filePath, stamps)
 	}
 
 	mw.watchers[prefix] = w

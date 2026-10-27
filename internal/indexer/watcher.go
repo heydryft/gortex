@@ -258,7 +258,7 @@ type Watcher struct {
 	discoverReindex    watcherBatchReindex   // additive directory discovery with the same complete tail
 	// pointReindexRaw runs the complete exact-path pipeline after the watcher
 	// already owns the repository lane. MultiWatcher installs its raw tail here.
-	pointReindexRaw func(string) (*IndexResult, error)
+	pointReindexRaw func(string, *PublicationStamps) (*IndexResult, error)
 
 	// poller is the adaptive-interval fallback that re-checks git
 	// HEAD movement and tracked-file mtimes on a timer, catching the
@@ -2693,14 +2693,14 @@ func pointMutationClassification(
 // reindexPointPathRaw runs after the caller has acquired the repository lane.
 // MultiWatcher supplies the cross-repository resolver and derived tail; a
 // standalone Watcher falls back to the equivalent single-repository tail.
-func (w *Watcher) reindexPointPathRaw(idx *Indexer, path string) (*IndexResult, error) {
+func (w *Watcher) reindexPointPathRaw(idx *Indexer, path string, stamps *PublicationStamps) (*IndexResult, error) {
 	if w.pointReindexRaw != nil {
-		return w.pointReindexRaw(path)
+		return w.pointReindexRaw(path, stamps)
 	}
 	if idx == nil || idx.rootPath == "" {
 		return nil, errWatcherIndexerMissing
 	}
-	return idx.incrementalPointWatcherPath(idx.rootPath, path)
+	return idx.incrementalPointWatcherPathObserved(idx.rootPath, path, stamps)
 }
 
 // patchGraphWithReceiptStateRawModern replaces the historical hand-built point
@@ -2778,7 +2778,7 @@ func (w *Watcher) patchGraphWithReceiptStateRawModern(
 	observation := beginDerivedFanoutObservation(idx)
 	defer observation.close()
 	markPointPublication(ctx, PublicationPatchExecutionStarted)
-	result, err := w.reindexPointPathRaw(idx, path)
+	result, err := w.reindexPointPathRaw(idx, path, PublicationStampsFrom(ctx))
 	markPointPublication(ctx, PublicationPatchExecutionFinished)
 	observed := observation.close()
 	if err != nil {
