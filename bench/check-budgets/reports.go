@@ -220,7 +220,8 @@ func validateReport(c inputs, input runInput, r report) error {
 		return errors.New("missing attempts")
 	}
 	for _, a := range p.Attempts {
-		if a.LogicalMS == nil || !finiteNonnegative(*a.LogicalMS) || a.Code == nil || (a.Outcome == "success" && *a.Code != 0) || (a.Outcome != "success" && !(a.Outcome == "busy" && *a.Code == -32002)) {
+		validOutcome := a.Code != nil && (a.Outcome == "success" && *a.Code == 0 || a.Outcome == "busy" && *a.Code == -32002)
+		if a.LogicalMS == nil || !finiteNonnegative(*a.LogicalMS) || !validOutcome {
 			return errors.New("failed, censored or unrecognized attempt retained: run cannot pass")
 		}
 	}
@@ -246,7 +247,7 @@ func validateHost(class, machine string, r report) error {
 	}
 	if class != "reference_linux" {
 		if r.Host.OS != "darwin" || r.Host.Arch != "arm64" || r.Host.Profile != "native" {
-			return errors.New("Mac inventory requires native Darwin ARM64 evidence")
+			return errors.New("mac inventory requires native Darwin ARM64 evidence")
 		}
 		return nil // Mac class assignment is an explicit external inventory prerequisite.
 	}

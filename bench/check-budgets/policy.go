@@ -162,7 +162,8 @@ func validateBudget(b budget, allowances map[string]allowance) error {
 	if _, ok := scenarioSpecs[b.Scenario]; !ok {
 		return fmt.Errorf("unknown scenario %s", b.Scenario)
 	}
-	if !slices.Contains([]string{"reference_linux", "reference_mac", "large_mac"}, b.HostClass) || (!releasePattern.MatchString(b.OwningRelease) && !(b.Mode == "guard" && b.OwningRelease == "unassigned")) {
+	validOwner := releasePattern.MatchString(b.OwningRelease) || b.Mode == "guard" && b.OwningRelease == "unassigned"
+	if !slices.Contains([]string{"reference_linux", "reference_mac", "large_mac"}, b.HostClass) || !validOwner {
 		return errors.New("invalid host class or owning release")
 	}
 	if !slices.Contains([]string{"le", "lt", "ge", "eq"}, b.Compare) || len(b.Lane) == 0 {
