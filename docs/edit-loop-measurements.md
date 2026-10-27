@@ -225,10 +225,45 @@ before source effects do not increment completed edits. Native editor stimuli
 remain harness-owned: filesystem events/coalesced watcher patches cannot identify
 a logical native edit and are never added to these MCP counters.
 
-No CPU endpoint, transport field, reset API or CPU-per-edit average is added by
-this slice. A later endpoint must pair raw process CPU/count baselines within
-one Server epoch, expose a stable count bracket and unavailable/zero-denominator
-states, and label background/other-session work honestly. Instrumentation cost,
-real client read-back, complete phase sums and the full workload matrix remain
-unmeasured acceptance work. Source tests are pending execution until an explicit
-validation slot; protocol fixtures are not installed-client evidence.
+Process CPU sampling is separate from these operation hooks. Protocol fixtures
+are not installed-client or performance evidence.
+
+## Process CPU/count stats window
+
+`graph_stats` and `gortex://stats` both add `process_edit_window` beside their
+view-derived graph fields. Its `count_scope` is `server_all_sessions_views` and
+its `cpu_scope` is `whole_process_including_background`. Process CPU includes
+reads, indexing, other sessions, unfinished work and any other Server in the
+process. It is not exclusive CPU attributed to the selected graph or an edit.
+
+An immutable `epoch` identifies this Server's observation window. At the end of
+construction, before handlers become callable, it captures process CPU between
+two zero-count snapshots. A literal/uninitialized Server reports no baseline;
+a failed baseline is retained rather than silently replaced on a later read.
+No stats read resets counters or the epoch.
+
+`baseline` and `sample` expose raw cumulative `cpu_seconds`, monotonic
+`sample_started_seconds`/`sample_finished_seconds` within that epoch, and full
+`counts_before`/`counts_after` brackets. A normal stats read takes exactly one
+process CPU sample. Unavailable CPU is null with `cpu_available=false` and a
+reason; a known zero CPU sample is a valid zero. Unix uses current-process
+user+system Getrusage; Windows uses GetProcessTimes kernel+user durations;
+unsupported platforms report unavailable.
+
+`cpu_seconds_per_edit` divides the process CPU delta from that same baseline
+by clean completed source operations from the matching zero-count baseline.
+It is numeric only for available, ordered CPU/clocks, a stable complete count
+bracket, at least one clean completed edit, and no committed-with-error,
+partial-effect or unknown-comparison outcome in the window. Otherwise it is
+null with `average_state=unavailable` and an explicit `average_reason`.
+A measured value is labelled `measured_process_window`, not exclusive edit CPU.
+The rollback subset is never added again as another operation.
+
+Raw samples remain available even when that since-baseline average is null.
+A harness can compare later warm-run endpoints only with the same nonempty
+epoch, valid stable brackets and an eligible outcome delta. Native logical
+operations still require the harness's own completed-stimulus denominator.
+Sampled since-store-open WAL peaks cannot be subtracted into a warm-window peak.
+No run-reset API, per-edit/process CPU syscall or tracing registry is introduced.
+Instrumentation cost, real client read-back, complete phase sums and the full
+workload matrix remain unmeasured acceptance work.

@@ -3771,6 +3771,9 @@ func (s *Server) buildGraphStatsPayloadFromStats(ctx context.Context, stats *gra
 	}
 
 	result["token_savings"] = s.tokenStatsFor(ctx).snapshot()
+	// Process CPU and this Server's logical edit outcomes span all views and
+	// clients. Keep that scope explicit beside the view-derived graph stats.
+	result["process_edit_window"] = s.processEditWindow()
 
 	if cs := s.cumulativeSavingsSnapshot(); cs != nil {
 		result["cumulative_savings"] = cs
