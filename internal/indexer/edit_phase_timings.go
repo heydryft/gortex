@@ -70,6 +70,9 @@ func (s PublicationPhaseSnapshot) EditTimings() EditPhaseTimings {
 			offsets, PublicationReceiptCommitted, PublicationTicketEnqueued, s.Terminal)
 	}
 	out.Milliseconds["derived"], out.States["derived"] = editDerivedInterval(offsets, s.Terminal)
+	if s.patchLaps != nil {
+		s.patchLaps.project(offsets, s.Terminal, &out)
+	}
 	terminal := PublicationTicketCompleted
 	if _, failed := offsets[PublicationTicketFailed]; failed {
 		terminal = PublicationTicketFailed
@@ -85,7 +88,7 @@ func (s PublicationPhaseSnapshot) EditTimings() EditPhaseTimings {
 	// Only subtract disjoint, wholly contained measured intervals. An invalid
 	// order leaves the residual unknown; never clamp it to a plausible zero.
 	var measured float64
-	for _, name := range []string{"disk_write", "publish", "derived"} {
+	for _, name := range []string{"disk_write", "publish", "gate_wait", "patch_parse", "apply", "search_lap", "resolve", "mtimes", "derived"} {
 		if out.States[name] == "invalid_order" || out.States[name] == "pending" {
 			return out
 		}

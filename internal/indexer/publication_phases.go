@@ -177,6 +177,7 @@ type PublicationPhaseRecord struct {
 	marks          []publicationMark
 	terminal       bool
 	canonicalBound bool
+	patchLaps      *canonicalPatchEvidence // immutable, exact accepted attempt only
 }
 
 type publicationMark struct {
@@ -453,6 +454,7 @@ type PublicationPhaseSnapshot struct {
 	Clock             string                   `json:"clock"`
 	Terminal          bool                     `json:"terminal"`
 	Phases            []PublicationPhaseOffset `json:"phases"`
+	patchLaps         *canonicalPatchEvidence  // private; legacy timeline wire stays unchanged
 }
 
 // Snapshot renders the record.
@@ -469,6 +471,7 @@ func (p *PublicationPhaseRecord) Snapshot() PublicationPhaseSnapshot {
 		Clock:             "monotonic",
 		Terminal:          p.terminal,
 		Phases:            make([]PublicationPhaseOffset, 0, len(p.marks)),
+		patchLaps:         p.patchLaps,
 	}
 	for _, mark := range p.marks {
 		offset := mark.at.Sub(p.origin)
@@ -517,8 +520,9 @@ func (p *PublicationPhaseRecord) FinishBackgroundWork(completed bool) {
 // (view selection, admission, the parse gate, the write's own checks) is
 // exactly where a slow commit's time goes. The record absorbs them when it opens.
 type PublicationStamps struct {
-	mu    sync.Mutex
-	marks []publicationMark
+	mu        sync.Mutex
+	marks     []publicationMark
+	patchLaps *canonicalPatchLaps
 }
 
 type publicationStampsKey struct{}
@@ -579,8 +583,20 @@ func (p *PublicationPhaseRecord) Absorb(stamps *PublicationStamps) {
 	}
 	stamps.mu.Lock()
 	marks := append([]publicationMark(nil), stamps.marks...)
+	var patch *canonicalPatchEvidence
+	if stamps.patchLaps != nil {
+		frozen := stamps.patchLaps.freeze(p.origin)
+		patch = &frozen
+	}
 	stamps.mu.Unlock()
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	for _, mark := range marks {
-		p.MarkAt(mark.phase, mark.at)
+		if !mark.at.IsZero() {
+			p.markLocked(mark.phase, mark.at)
+		}
+	}
+	if !p.terminal && p.canonicalBound && p.patchLaps == nil {
+		p.patchLaps = patch
 	}
 }
