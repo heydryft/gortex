@@ -111,3 +111,10 @@ func TestMissingOrDifferentUnitsAndWeakerReadbackCannotPass(t *testing.T) {
 		t.Fatal("indexed visibility must not stand in for exact file readback")
 	}
 }
+
+func TestStopTwentyCannotUseThreeReports(t *testing.T) {
+	d := dataset{config: inputs{Repeats: 3}}
+	if _, _, err := d.samples("candidate", budget{Scenario: "idle-stop-20", MinRepeats: 20}); err == nil {
+		t.Fatal("three repetitions cannot prove 20 clean stops")
+	}
+}

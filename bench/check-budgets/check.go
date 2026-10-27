@@ -141,7 +141,11 @@ func assess(p policy, b budget, candidate, main, tag []float64, lane string) res
 func (d dataset) samples(role string, b budget) ([]float64, []report, error) {
 	var values []float64
 	var reports []report
-	for repeat := 1; repeat <= d.config.Repeats; repeat++ {
+	planned := d.config.repeats(b.Scenario)
+	if planned < max(3, b.MinRepeats) {
+		return nil, nil, fmt.Errorf("%s needs at least %d planned repeats", b.Scenario, max(3, b.MinRepeats))
+	}
+	for repeat := 1; repeat <= planned; repeat++ {
 		var found *report
 		for _, run := range d.runs {
 			if run.input.Role == role && run.input.HostClass == b.HostClass && run.input.Scenario == b.Scenario && run.input.Repeat == repeat {
@@ -154,17 +158,27 @@ func (d dataset) samples(role string, b budget) ([]float64, []report, error) {
 			return nil, nil, fmt.Errorf("%s missing planned repeat %d", role, repeat)
 		}
 		v, err := extract(b.Metric, b.HostClass, *found)
-		if b.Metric == "read_p95_vs_load8" {
+		if b.Metric == "read_p95_vs_load8" || b.Metric == "read_p95_vs_main" {
 			// Ratio of medians, not pooled raw latencies or mismatched tools.
 			reference := b
-			reference.Scenario, reference.Metric = "load-8", "read_p95"
-			base, referenceReports, baseErr := d.samples(role, reference)
+			reference.Metric = "read_p95"
+			baseRole := role
+			if b.Metric == "read_p95_vs_load8" {
+				reference.Scenario = "load-8"
+			} else {
+				baseRole = "main"
+			}
+			base, referenceReports, baseErr := d.samples(baseRole, reference)
 			denominator, medianErr := median(base)
 			v, err = readP95(found.Phases[0])
-			if baseErr != nil || medianErr != nil || denominator <= 0 {
-				return nil, nil, errors.New("missing comparable load-8 read p95 denominator")
+			if baseErr != nil || medianErr != nil || denominator <= 0 || len(referenceReports) != planned {
+				return nil, nil, errors.New("missing comparable reference read p95 denominator")
 			}
-			if !comparableReadLoads(*found, referenceReports[repeat-1]) {
+			matched := comparable(*found, referenceReports[repeat-1])
+			if b.Metric == "read_p95_vs_load8" {
+				matched = comparableReadLoads(*found, referenceReports[repeat-1])
+			}
+			if !matched {
 				return nil, nil, errors.New("load-8 reference host/corpus/workload differs beyond agent count")
 			}
 			v /= denominator

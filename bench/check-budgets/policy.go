@@ -46,6 +46,7 @@ type budget struct {
 	Allowance     []string `yaml:"allowance"`
 	Lane          []string `yaml:"lane"`
 	Compare       string   `yaml:"compare"`
+	MinRepeats    int      `yaml:"min_repeats"`
 }
 
 var releasePattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
@@ -167,6 +168,9 @@ func validateBudget(b budget, allowances map[string]allowance) error {
 	if !slices.Contains([]string{"le", "lt", "ge", "eq"}, b.Compare) || len(b.Lane) == 0 {
 		return errors.New("explicit comparison and lanes required")
 	}
+	if b.MinRepeats != 0 && b.MinRepeats < 3 {
+		return errors.New("min_repeats cannot weaken the three-repeat minimum")
+	}
 	for i, lane := range b.Lane {
 		if !slices.Contains([]string{"smoke", "nightly", "release"}, lane) || slices.Contains(b.Lane[:i], lane) {
 			return fmt.Errorf("unknown or repeated lane %s", lane)
@@ -183,6 +187,9 @@ func validateBudget(b budget, allowances map[string]allowance) error {
 		}
 	default:
 		return errors.New("mode must be block or guard")
+	}
+	if b.Unit == "fraction" && b.Target != nil && *b.Target > 1 {
+		return errors.New("fraction target must be in [0,1], not percent")
 	}
 	for i, name := range b.Allowance {
 		a, ok := allowances[name]

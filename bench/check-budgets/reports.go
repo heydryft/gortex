@@ -17,6 +17,7 @@ type inputs struct {
 	MainRevision      string            `json:"main_revision"`
 	TagRevision       string            `json:"tag_revision"`
 	Repeats           int               `json:"repeats"`
+	ScenarioRepeats   map[string]int    `json:"scenario_repeats"`
 	Hosts             map[string]string `json:"hosts"` // reviewed host class -> exact observed machine
 	Runs              []runInput        `json:"runs"`
 }
@@ -123,6 +124,11 @@ func loadInputs(path string) (dataset, error) {
 	if c.Version != 1 || c.Repeats < 3 || len(c.Hosts) == 0 || len(c.Runs) == 0 || !revisionPattern.MatchString(c.CandidateRevision) || !revisionPattern.MatchString(c.MainRevision) || c.TagRevision != shippedRevision {
 		return out, errors.New("inputs need schema1, >=3 planned repeats, reviewed hosts and full candidate/main/shipped revisions")
 	}
+	for scenario, repeats := range c.ScenarioRepeats {
+		if _, ok := scenarioSpecs[scenario]; !ok || repeats < 3 {
+			return out, errors.New("invalid scenario-specific planned repeat count")
+		}
+	}
 	machines := make(map[string]bool)
 	for class, machine := range c.Hosts {
 		if (class != "reference_linux" && class != "reference_mac" && class != "large_mac") || machine == "" || machines[machine] {
@@ -172,13 +178,20 @@ func validateRunInput(c inputs, r runInput) error {
 	if r.Role != "candidate" && r.Role != "main" && r.Role != "tag" {
 		return fmt.Errorf("unknown role %s", r.Role)
 	}
-	if c.Hosts[r.HostClass] == "" || (r.HostClass != "reference_linux" && r.HostClass != "reference_mac" && r.HostClass != "large_mac") || r.Repeat < 1 || r.Repeat > c.Repeats || r.Report == "" {
+	if c.Hosts[r.HostClass] == "" || (r.HostClass != "reference_linux" && r.HostClass != "reference_mac" && r.HostClass != "large_mac") || r.Repeat < 1 || r.Repeat > c.repeats(r.Scenario) || r.Report == "" {
 		return errors.New("run lacks reviewed host binding, planned repeat or report")
 	}
 	if _, ok := scenarioSpecs[r.Scenario]; !ok {
 		return fmt.Errorf("unknown scenario %s", r.Scenario)
 	}
 	return nil
+}
+
+func (c inputs) repeats(scenario string) int {
+	if n, ok := c.ScenarioRepeats[scenario]; ok {
+		return n
+	}
+	return c.Repeats
 }
 
 func validateReport(c inputs, input runInput, r report) error {

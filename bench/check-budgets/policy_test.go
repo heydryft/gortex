@@ -77,3 +77,20 @@ func TestBudgetPolicyKnownUnmeasuredTargetsStayDeclared(t *testing.T) {
 		t.Fatal("exact file readback must not silently use indexed-symbol visibility")
 	}
 }
+
+func TestGuardKnownTargetPromotesWithoutSpendingItsAllowance(t *testing.T) {
+	p := testPolicy()
+	p.Allowances = []allowance{{Name: "wal", Kind: "guard_limit", Value: 2048, Unit: "MiB", OwningRelease: "v0.64.12", Metrics: []string{"wal_peak_mib"}, Scenarios: []string{"loadedit-4"}}}
+	p.Budgets = []budget{{Metric: "wal_peak_mib", Scenario: "loadedit-4", HostClass: "reference_linux", OwningRelease: "v0.64.17", Mode: "guard", Target: pointer(2048), Unit: "MiB", Allowance: []string{"wal"}, Lane: []string{"release"}, Compare: "le"}}
+	if err := p.validate(); err != nil {
+		t.Fatal(err)
+	}
+	p.Budgets[0].Mode = "block"
+	if err := p.validate(); err != nil {
+		t.Fatalf("known target should promote with one mode change: %v", err)
+	}
+	r := assess(p, p.Budgets[0], repeated(2100), repeated(3000), nil, "release")
+	if r.Pass || r.Limit == nil || *r.Limit != 2048 || r.EffectiveHeadroom == nil || *r.EffectiveHeadroom != 0 {
+		t.Fatal("promoted block target must not spend guard headroom")
+	}
+}

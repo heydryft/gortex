@@ -15,6 +15,7 @@ var metricSpecs = map[string]metricSpec{
 	"edit_ack_max":          {unit: "s", axis: "timing", everyRepeat: true},
 	"read_p95":              {unit: "s", axis: "timing"},
 	"read_p95_vs_load8":     {unit: "ratio", axis: "timing"},
+	"read_p95_vs_main":      {unit: "ratio", axis: "timing"},
 	"search_symbols_p95":    {unit: "s", axis: "timing"},
 	"read_source_p99":       {unit: "s", axis: "timing"},
 	"outline_p50":           {unit: "s", axis: "timing"},
@@ -22,7 +23,7 @@ var metricSpecs = map[string]metricSpec{
 	"dead_code_vs_single":   {unit: "ratio", axis: "timing"},
 	"busy_fraction":         {unit: "fraction", axis: "refusal"},
 	"daemon_cpu_cores":      {unit: "cores", axis: "cpu"},
-	"stop_seconds":          {unit: "s", axis: "timing"},
+	"stop_seconds":          {unit: "s", axis: "timing", everyRepeat: true},
 	"force_kills":           {unit: "count", axis: "safety", everyRepeat: true},
 	"panics":                {unit: "count", axis: "safety", everyRepeat: true},
 	"sigaborts":             {unit: "count", axis: "safety", everyRepeat: true},
@@ -75,7 +76,7 @@ func buildScenarioSpecs() map[string]scenarioSpec {
 		name string
 		n    int
 	}{{"4", 4}, {"8", 8}, {"16", 16}} {
-		out["worktrees-"+cell.name] = scenarioSpec{wire: "worktrees", agents: 4, repos: 1, worktrees: cell.n}
+		out["worktrees-"+cell.name] = scenarioSpec{wire: "worktrees", agents: 4, repos: 1, worktrees: cell.n, missing: "frozen worktrees drives read bursts, not the required linked-worktree edit probes"}
 	}
 	out["cold-gortex"] = scenarioSpec{wire: "cold", agents: 1, repos: 1}
 	out["warm-restart"] = scenarioSpec{wire: "restart", agents: 1, repos: 1}
@@ -83,7 +84,7 @@ func buildScenarioSpecs() map[string]scenarioSpec {
 		out["tools-single-"+name] = scenarioSpec{wire: "sweep", agents: 1, repos: 1}
 		out["tools-six-"+name] = scenarioSpec{wire: "sweep", agents: 1, repos: 6, missing: "frozen sweep loads manifest[0], not six scoped sessions"}
 	}
-	for _, name := range []string{"idle-stop", "churn-60", "cold-six", "schema21-upgrade", "cold-start", "large-freelist", "restart-831", "agent-e2e", "lapsed-upgrade"} {
+	for _, name := range []string{"idle-stop", "idle-stop-20", "cancel", "churn-60", "cold-six", "schema21-upgrade", "cold-start", "large-freelist", "restart-831", "agent-e2e", "lapsed-upgrade"} {
 		out[name] = scenarioSpec{missing: "frozen load CLI does not identify this lifecycle/fixture as a distinct measured scenario"}
 	}
 	return out
