@@ -387,11 +387,28 @@ func committedAtFor(ctx context.Context, path string) time.Time {
 // publicationPhasesPayload renders the publication record kept under a
 // graph-refresh receipt, folding in the disk commit instant the commit ledger
 // holds (same process, same monotonic clock). Nil when no record exists.
-func publicationPhasesPayload(receiptID string, committedAt time.Time) any {
+func publicationPhasesPayload(receiptID string, committedAt time.Time) *indexer.PublicationPhaseSnapshot {
 	record, ok := indexer.DefaultPublicationPhases().Lookup(receiptID)
 	if !ok {
 		return nil
 	}
 	record.MarkAt(indexer.PublicationReceiptCommitted, committedAt)
-	return record.Snapshot()
+	snapshot := record.Snapshot()
+	return &snapshot
+}
+
+// attachMutationPhaseTimings reads one publication snapshot for both payloads,
+// so a concurrently completing receipt cannot give them different endpoints.
+// Older/canonical paths without a timeline expose unavailable durations, not
+// zeroes. The legacy publication_phases value and vocabulary stay unchanged.
+func attachMutationPhaseTimings(payload map[string]any, receiptID string, committedAt time.Time, source string) {
+	snapshot := indexer.PublicationPhaseSnapshot{Source: source}
+	if phases := publicationPhasesPayload(receiptID, committedAt); phases != nil {
+		snapshot = *phases
+		payload["publication_phases"] = snapshot
+	}
+	timings := snapshot.EditTimings()
+	payload["phases_ms"] = timings.Milliseconds
+	payload["phase_states"] = timings.States
+	payload["phase_timing"] = timings.Window
 }

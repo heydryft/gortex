@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+
+	"github.com/zzet/gortex/internal/indexer"
 )
 
 var graphFreshnessReceiptID = regexp.MustCompile(`^mutation-\d+$`)
@@ -136,9 +138,7 @@ func (s *Server) graphRefreshReceiptPayload(ctx context.Context, id string) (map
 	if outcome.Err != nil {
 		payload["error"] = outcome.Err.Error()
 	}
-	if phases := publicationPhasesPayload(receipt.id, time.Time{}); phases != nil {
-		payload["publication_phases"] = phases
-	}
+	attachMutationPhaseTimings(payload, receipt.id, time.Time{}, indexer.PublicationSourceFreshRequest)
 	return payload, true
 }
 
@@ -207,14 +207,10 @@ func (s *Server) mutationStatusPayload(record *mutationCommitRecord) map[string]
 		payload["graph_note"] = note
 	}
 	payload["guidance"] = mutationStatusGuidance(snap.DiskStatus)
-	if snap.ReindexReceipt != "" {
-		record.mu.RLock()
-		committedAt := record.committedAt
-		record.mu.RUnlock()
-		if phases := publicationPhasesPayload(snap.ReindexReceipt, committedAt); phases != nil {
-			payload["publication_phases"] = phases
-		}
-	}
+	record.mu.RLock()
+	committedAt := record.committedAt
+	record.mu.RUnlock()
+	attachMutationPhaseTimings(payload, snap.ReindexReceipt, committedAt, indexer.PublicationSourceMCPEdit)
 	return payload
 }
 

@@ -1,0 +1,125 @@
+package indexer
+
+// EditPhaseTimings projects duration evidence from a single immutable
+// publication snapshot. Missing measurements are null, never measured zero.
+// This is deliberately partial: publication timestamps do not yet delimit
+// dispatcher admission, the response/ack, or the individual patch laps.
+type EditPhaseTimings struct {
+	Milliseconds map[string]*float64 `json:"phases_ms"`
+	States       map[string]string   `json:"phase_states"`
+	Window       EditTimingWindow    `json:"phase_timing"`
+}
+
+// EditTimingWindow distinguishes the receipt's publication interval from the
+// acknowledgement and physical patch intervals. Those lifetimes can overlap;
+// adding their walls would double-count work. The publication residual includes
+// uninstrumented transitions and waits inside that interval; it does not
+// identify the acknowledgement's default reindex wait. It is not a phase
+// measurement or a claim of complete phase accounting.
+type EditTimingWindow struct {
+	Clock                         string   `json:"clock"`
+	Coverage                      string   `json:"coverage"`
+	AcknowledgementWallMS         *float64 `json:"ack_wall_ms"`
+	PatchWallMS                   *float64 `json:"patch_wall_ms"`
+	PublicationWallMS             *float64 `json:"publication_wall_ms"`
+	PublicationUnattributedWallMS *float64 `json:"publication_unattributed_ms"`
+}
+
+var editAckPhaseNames = [...]string{
+	"dispatcher_queue", "middleware", "parse", "disk_write", "publish", "reindex_wait",
+}
+
+var editPatchPhaseNames = [...]string{
+	"debounce", "lane_wait", "gate_wait", "patch_parse", "apply", "search_lap", "resolve", "mtimes", "derived",
+}
+
+// EditTimings uses nanosecond offsets from the same-process monotonic clock,
+// rather than the rounded milliseconds or wall-clock strings in the snapshot.
+// It does not interpret cycle_started→admitted as pure lane wait, nor split
+// structural apply into overlapping nested spans. Those require explicit
+// instrumentation at their actual boundaries.
+func (s PublicationPhaseSnapshot) EditTimings() EditPhaseTimings {
+	out := EditPhaseTimings{
+		Milliseconds: make(map[string]*float64, len(editAckPhaseNames)+len(editPatchPhaseNames)),
+		States:       make(map[string]string, len(editAckPhaseNames)+len(editPatchPhaseNames)),
+		Window:       EditTimingWindow{Clock: "unavailable", Coverage: "partial"},
+	}
+	for _, name := range editAckPhaseNames {
+		out.Milliseconds[name] = nil
+		out.States[name] = "not_observed"
+		if s.Source == PublicationSourceFreshRequest || s.Source == PublicationSourceBackgroundCompaction {
+			out.States[name] = "not_applicable"
+		}
+	}
+	for _, name := range editPatchPhaseNames {
+		out.Milliseconds[name] = nil
+		out.States[name] = "not_observed"
+	}
+	if s.Clock != "monotonic" {
+		return out
+	}
+	out.Window.Clock = s.Clock
+	offsets := make(map[PublicationPhase]int64, len(s.Phases))
+	for _, phase := range s.Phases {
+		offsets[phase.Phase] = phase.OffsetNS
+	}
+	if s.Source == PublicationSourceMCPEdit {
+		out.Milliseconds["disk_write"], out.States["disk_write"] = editPhaseInterval(
+			offsets, PublicationDiskWriteStarted, PublicationReceiptCommitted, s.Terminal)
+		out.Milliseconds["publish"], out.States["publish"] = editPhaseInterval(
+			offsets, PublicationReceiptCommitted, PublicationTicketEnqueued, s.Terminal)
+	}
+	terminal := PublicationTicketCompleted
+	if _, failed := offsets[PublicationTicketFailed]; failed {
+		terminal = PublicationTicketFailed
+	}
+	if !s.Terminal {
+		return out
+	}
+	wall, state := editPhaseInterval(offsets, PublicationReceived, terminal, true)
+	if state != "measured" {
+		return out
+	}
+	out.Window.PublicationWallMS = wall
+	// Only subtract disjoint, wholly contained measured intervals. An invalid
+	// order leaves the residual unknown; never clamp it to a plausible zero.
+	var measured float64
+	for _, name := range []string{"disk_write", "publish"} {
+		if out.States[name] == "invalid_order" || out.States[name] == "pending" {
+			return out
+		}
+		if ms := out.Milliseconds[name]; ms != nil {
+			measured += *ms
+		}
+	}
+	if enqueued, ok := offsets[PublicationTicketEnqueued]; ok && enqueued > offsets[terminal] {
+		return out
+	}
+	if committed, ok := offsets[PublicationReceiptCommitted]; ok && committed > offsets[terminal] {
+		return out
+	}
+	if measured <= *wall {
+		residual := *wall - measured
+		out.Window.PublicationUnattributedWallMS = &residual
+	}
+	return out
+}
+
+func editPhaseInterval(offsets map[PublicationPhase]int64, start, end PublicationPhase, terminal bool) (*float64, string) {
+	begin, hasStart := offsets[start]
+	finish, hasEnd := offsets[end]
+	if hasStart && begin < 0 || hasEnd && finish < 0 || hasStart && hasEnd && finish < begin {
+		return nil, "invalid_order"
+	}
+	if !hasStart {
+		return nil, "not_observed"
+	}
+	if !hasEnd {
+		if !terminal {
+			return nil, "pending"
+		}
+		return nil, "not_observed"
+	}
+	ms := float64(finish-begin) / 1e6
+	return &ms, "measured"
+}
