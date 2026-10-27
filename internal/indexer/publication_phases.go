@@ -340,6 +340,24 @@ func (p *PublicationPhaseRecord) BindTicket(sequence uint64) {
 	p.mu.Unlock()
 }
 
+// bindCanonicalTicket is called under the watcher's admission mutex, before
+// its debounce timer can wake. A record describes one ticket: accidentally
+// reused or terminal context metadata must not attach an old edit to a newer
+// generation. This only refuses timing association, never mutation admission.
+func (p *PublicationPhaseRecord) bindCanonicalTicket(sequence uint64, at time.Time) bool {
+	if p == nil || sequence == 0 {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.terminal || at.Before(p.origin) || p.ticket != 0 && p.ticket != sequence {
+		return false
+	}
+	p.ticket = sequence
+	p.markLocked(PublicationTicketEnqueued, at)
+	return true
+}
+
 // SetGeneration records the dirty generation that published this record.
 func (p *PublicationPhaseRecord) SetGeneration(generationID int64) {
 	if p == nil || generationID <= 0 {

@@ -61,6 +61,10 @@ type MutationTicket struct {
 	Path       string
 	Generation uint64
 	Done       <-chan MutationResult
+	// PublicationRecord is optional, immutable admission metadata. Native
+	// events have none. The watcher binds it before waking work; the existing
+	// consumer of Done records completion, never a second channel reader.
+	PublicationRecord *PublicationPhaseRecord `json:"-"`
 }
 
 // MutationResult is the terminal graph-freshness result for a ticket.
@@ -1809,7 +1813,7 @@ func (w *Watcher) EnqueueFileMutation(ctx context.Context, filePath string) (*Mu
 	if w.mutationBeforeAdmission != nil {
 		w.mutationBeforeAdmission()
 	}
-	ticket := w.scheduleFileMutation(absPath, ChangeModified)
+	ticket := w.scheduleFileMutationWithRecord(absPath, ChangeModified, PublicationRecordFromContext(ctx))
 	if ticket == nil {
 		return nil, errWatcherStopped
 	}
@@ -1918,6 +1922,10 @@ func (w *Watcher) EnqueueFileMutations(ctx context.Context, files []string) (map
 // for the same path; every earlier ticket stays attached until the newest patch
 // produces a terminal graph event.
 func (w *Watcher) scheduleFileMutation(path string, kind ChangeKind) *MutationTicket {
+	return w.scheduleFileMutationWithRecord(path, kind, nil)
+}
+
+func (w *Watcher) scheduleFileMutationWithRecord(path string, kind ChangeKind, record *PublicationPhaseRecord) *MutationTicket {
 	w.mu.Lock()
 	if w.stopping {
 		w.mu.Unlock()
@@ -1942,9 +1950,13 @@ func (w *Watcher) scheduleFileMutation(path string, kind ChangeKind) *MutationTi
 	done := make(chan MutationResult, 1)
 	w.mutationWaiters[path][generation] = done
 	w.pendingGeneration[path] = generation
+	ticket := &MutationTicket{Path: path, Generation: generation, Done: done}
+	if record != nil && record.bindCanonicalTicket(generation, time.Now()) {
+		ticket.PublicationRecord = record
+	}
 	w.armPointMutationTimerLocked(path, kind, generation, 0, time.Duration(w.config.DebounceMs)*time.Millisecond)
 	w.mu.Unlock()
-	return &MutationTicket{Path: path, Generation: generation, Done: done}
+	return ticket
 }
 
 func (w *Watcher) armPointMutationTimerLocked(path string, kind ChangeKind, generation uint64, retryAttempt int, delay time.Duration) {
