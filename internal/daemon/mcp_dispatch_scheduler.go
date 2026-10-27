@@ -3,9 +3,10 @@ package daemon
 import (
 	"context"
 	"fmt"
-	"github.com/zzet/gortex/internal/viewmetrics"
 	"sync"
 	"time"
+
+	"github.com/zzet/gortex/internal/viewmetrics"
 )
 
 const (
