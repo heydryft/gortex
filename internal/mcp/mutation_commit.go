@@ -137,6 +137,10 @@ type mutationCommitRecord struct {
 
 	startedAt   time.Time
 	committedAt time.Time
+	// Each physical file commit owns its disk boundary and timing record.
+	// Request-wide first-wins stamps cannot identify a second file's write.
+	diskWriteStartedAt time.Time
+	publication        *indexer.PublicationPhaseRecord
 
 	// response is the successful tool payload, retained only for records that
 	// carry a caller-chosen mutation_id. Without a key there is nothing to
@@ -440,6 +444,9 @@ func (l *mutationCommitLedger) evictLocked(now time.Time) {
 		}
 		record.mu.RUnlock()
 		if expired {
+			record.mu.Lock()
+			record.publication = nil
+			record.mu.Unlock()
 			delete(l.byID, record.id)
 			if record.key != "" && l.byKey[record.key] == record {
 				delete(l.byKey, record.key)
@@ -452,9 +459,10 @@ func (l *mutationCommitLedger) evictLocked(now time.Time) {
 	for len(l.ordered) >= maxMutationCommits {
 		oldest := l.ordered[0]
 		l.ordered = l.ordered[1:]
-		oldest.mu.RLock()
+		oldest.mu.Lock()
 		l.unbindFreshnessLocked(oldest)
-		oldest.mu.RUnlock()
+		oldest.publication = nil
+		oldest.mu.Unlock()
 		delete(l.byID, oldest.id)
 		if oldest.key != "" && l.byKey[oldest.key] == oldest {
 			delete(l.byKey, oldest.key)
@@ -648,6 +656,9 @@ func (s *Server) commitFileMutation(
 		record.markNotApplied(err)
 		return record, fmt.Errorf("%w: %w", errMutationNotApplied, err)
 	}
+	record.mu.Lock()
+	record.diskWriteStartedAt = time.Now()
+	record.mu.Unlock()
 	indexer.StampPublicationPhase(ctx, indexer.PublicationDiskWriteStarted)
 	if err := agents.AtomicWriteFile(absPath, data, perm); err != nil {
 		record.markFailed(err)

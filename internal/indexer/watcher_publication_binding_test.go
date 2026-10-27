@@ -81,3 +81,19 @@ func TestCanonicalMutationRejectsTerminalTimingAssociation(t *testing.T) {
 	require.True(t, w.completeMutationWaitersIfCurrent("edit.go", ticket.Generation, nil))
 	require.NoError(t, awaitMutationRetryResult(t, ticket).Err)
 }
+
+func TestCanonicalMutationCannotReuseRecordAcrossEqualSequences(t *testing.T) {
+	firstWatcher, secondWatcher := newMutationRetryTestWatcher(t), newMutationRetryTestWatcher(t)
+	firstWatcher.config.DebounceMs = int(time.Hour / time.Millisecond)
+	secondWatcher.config.DebounceMs = int(time.Hour / time.Millisecond)
+	record := NewPublicationPhaseRecorder(1, 1).Begin("", "single-use", PublicationSourceMCPEdit, time.Now())
+	first := firstWatcher.scheduleFileMutationWithRecord("first.go", ChangeModified, record)
+	second := secondWatcher.scheduleFileMutationWithRecord("second.go", ChangeModified, record)
+	require.Equal(t, first.Generation, second.Generation, "sequences are local to their watcher")
+	require.Same(t, record, first.PublicationRecord)
+	require.Nil(t, second.PublicationRecord, "equal sequence numbers do not establish the same physical admission")
+	require.True(t, firstWatcher.completeMutationWaitersIfCurrent("first.go", first.Generation, nil))
+	require.True(t, secondWatcher.completeMutationWaitersIfCurrent("second.go", second.Generation, nil))
+	require.NoError(t, awaitMutationRetryResult(t, first).Err)
+	require.NoError(t, awaitMutationRetryResult(t, second).Err)
+}

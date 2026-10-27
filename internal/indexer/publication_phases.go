@@ -157,15 +157,16 @@ func DefaultPublicationPhases() *PublicationPhaseRecorder { return defaultPublic
 // PublicationPhaseRecord is one edit's (or one fresh request's) path to
 // publication.
 type PublicationPhaseRecord struct {
-	mu         sync.Mutex
-	key        string
-	checkoutID string
-	source     string
-	ticket     uint64
-	generation int64
-	origin     time.Time
-	marks      []publicationMark
-	terminal   bool
+	mu             sync.Mutex
+	key            string
+	checkoutID     string
+	source         string
+	ticket         uint64
+	generation     int64
+	origin         time.Time
+	marks          []publicationMark
+	terminal       bool
+	canonicalBound bool
 }
 
 type publicationMark struct {
@@ -350,12 +351,23 @@ func (p *PublicationPhaseRecord) bindCanonicalTicket(sequence uint64, at time.Ti
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.terminal || at.Before(p.origin) || p.ticket != 0 && p.ticket != sequence {
+	if p.terminal || p.canonicalBound || at.Before(p.origin) || p.ticket != 0 {
 		return false
 	}
+	p.canonicalBound = true
 	p.ticket = sequence
 	p.markLocked(PublicationTicketEnqueued, at)
 	return true
+}
+
+// Key returns the current recorder identity without allocating a phase snapshot.
+func (p *PublicationPhaseRecord) Key() string {
+	if p == nil {
+		return ""
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.key
 }
 
 // SetGeneration records the dirty generation that published this record.

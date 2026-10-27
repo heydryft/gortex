@@ -138,7 +138,14 @@ func (s *Server) graphRefreshReceiptPayload(ctx context.Context, id string) (map
 	if outcome.Err != nil {
 		payload["error"] = outcome.Err.Error()
 	}
-	attachMutationPhaseTimings(payload, receipt.id, time.Time{}, indexer.PublicationSourceFreshRequest)
+	var retained *indexer.PublicationPhaseRecord
+	if commit, found := s.mutationCommits.byFreshnessReceipt(receipt.id); found && mutationCommitInScope(ctx, commit) {
+		retained, _ = retainedMutationPublication(commit)
+		if retained != nil && retained.Key() != receipt.id {
+			retained = nil
+		}
+	}
+	attachMutationPhaseTimings(payload, receipt.id, time.Time{}, indexer.PublicationSourceFreshRequest, retained)
 	return payload, true
 }
 
@@ -207,10 +214,8 @@ func (s *Server) mutationStatusPayload(record *mutationCommitRecord) map[string]
 		payload["graph_note"] = note
 	}
 	payload["guidance"] = mutationStatusGuidance(snap.DiskStatus)
-	record.mu.RLock()
-	committedAt := record.committedAt
-	record.mu.RUnlock()
-	attachMutationPhaseTimings(payload, snap.ReindexReceipt, committedAt, indexer.PublicationSourceMCPEdit)
+	retained, committedAt := retainedMutationPublication(record)
+	attachMutationPhaseTimings(payload, snap.ReindexReceipt, committedAt, indexer.PublicationSourceMCPEdit, retained)
 	return payload
 }
 

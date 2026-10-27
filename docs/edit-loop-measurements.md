@@ -35,6 +35,23 @@ admission. It does not include waiting for the admitted publication to finish.
 The projection uses nanosecond offsets before converting to milliseconds,
 rather than subtracting rounded timeline values or parsing wall-clock strings.
 
+Canonical single-file commits retain their own disk-start boundary and timing
+record through the existing bounded commit ledger. Admission binds the original
+watcher sequence before debounce can wake; only the existing ticket-result
+consumer records completion. A newer coalesced application can serve that
+original ticket, but does not become its ticket identity, a checkout generation,
+or invented per-receipt patch laps. Native events have no MCP acknowledgement.
+
+Immediate-success edits keep the existing empty public freshness-receipt field;
+their commit receipt can still render its retained timing. Different files or
+versions within one request own distinct disk intervals even though they share
+the middleware origin. Their receipt walls overlap and must not be added as RPC
+time. Timing pointers are cleared on ledger expiry/cap eviction even when source
+evidence keeps a commit object alive; a late callback cannot resurrect them.
+Rebinding a commit to a replacement freshness receipt does not borrow that
+replacement's timing or retarget the original record. Atomic batch/journal
+timing and response/transport timing remain separate pending work.
+
 ## Separate lifetimes
 
 `phase_timing.clock` is `monotonic` when a timeline exists, otherwise

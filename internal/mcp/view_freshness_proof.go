@@ -316,7 +316,10 @@ var pendingEditRecordSequence atomic.Uint64
 // admission through indexer.WithPublicationRecord, so the coordinator binds
 // the ticket to it (and marks ticket_enqueued) before it wakes the cycle that
 // serves it. Its origin is the instant the tool call entered the middleware.
-func openMutationPhases(ctx context.Context, checkoutID, path string) (*indexer.PublicationPhaseRecord, string) {
+func (s *Server) openMutationPhases(ctx context.Context, checkoutID, path string) (*indexer.PublicationPhaseRecord, string) {
+	if record := s.committedPublicationRecord(ctx, path); record != nil {
+		return record, record.Key()
+	}
 	key := fmt.Sprintf("edit-pending-%d", pendingEditRecordSequence.Add(1))
 	record := indexer.DefaultPublicationPhases().Begin(checkoutID, key, indexer.PublicationSourceMCPEdit, toolReceivedAt(ctx))
 	// The disk commit happened before admission, on this request: its
@@ -401,9 +404,19 @@ func publicationPhasesPayload(receiptID string, committedAt time.Time) *indexer.
 // so a concurrently completing receipt cannot give them different endpoints.
 // Older/canonical paths without a timeline expose unavailable durations, not
 // zeroes. The legacy publication_phases value and vocabulary stay unchanged.
-func attachMutationPhaseTimings(payload map[string]any, receiptID string, committedAt time.Time, source string) {
+func attachMutationPhaseTimings(payload map[string]any, receiptID string, committedAt time.Time, source string, retained *indexer.PublicationPhaseRecord) {
 	snapshot := indexer.PublicationPhaseSnapshot{Source: source}
-	if phases := publicationPhasesPayload(receiptID, committedAt); phases != nil {
+	if retained != nil {
+		// Recovery may rebind the commit to a different freshness receipt.
+		// Its physical write record must not borrow the replacement's phases,
+		// or let an older completion appear to finish that newer request.
+		retained.MarkAt(indexer.PublicationReceiptCommitted, committedAt)
+		candidate := retained.Snapshot()
+		if receiptID == "" || candidate.Key == receiptID {
+			snapshot = candidate
+			payload["publication_phases"] = snapshot
+		}
+	} else if phases := publicationPhasesPayload(receiptID, committedAt); phases != nil {
 		snapshot = *phases
 		payload["publication_phases"] = snapshot
 	}
