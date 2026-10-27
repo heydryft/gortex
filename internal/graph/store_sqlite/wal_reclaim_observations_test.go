@@ -105,10 +105,6 @@ func TestWALReclaimFinalCauseSurvivesDisappearingDemand(t *testing.T) {
 				for _, cleanup := range cleanups {
 					cleanup()
 				}
-				// Multiple consumers of the same real cause do not count polls
-				// or nested writer-credit attempts as additional cancellations.
-				noteWALReclaimDemand(resetCtx, context.Cause(resetCtx))
-				noteWALReclaimDemand(resetCtx, context.Cause(resetCtx))
 			}
 			var result walReclaimResult
 			select {
@@ -137,6 +133,19 @@ func TestWALReclaimFinalCauseSurvivesDisappearingDemand(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWALReclaimDemandConsumersRetainOneAttemptCause(t *testing.T) {
+	attempt := &backgroundCheckpointAttempt{}
+	ctx := context.WithValue(t.Context(), walReclaimAttemptKey{}, attempt)
+	noteWALReclaimDemand(ctx, walParkedDemand)
+	noteWALReclaimDemand(ctx, walParkedDemand)
+	noteWALReclaimDemand(ctx, walIntentDemand)
+	require.Equal(t, uint32(walReclaimWriterParked), attempt.reclaimInterruption.Load())
+	var stats WALReclaimStats
+	stats.noteInterruption(walReclaimResult{attempt: attempt})
+	require.Equal(t, int64(1), stats.CancelledWriterParked)
+	require.Zero(t, stats.CancelledWriteIntent+stats.CancelledOther)
 }
 
 func TestWALReclaimHelperCleanupAndResetAreNotExtraAttempts(t *testing.T) {
