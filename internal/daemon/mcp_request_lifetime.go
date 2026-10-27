@@ -274,6 +274,12 @@ type mcpDispatchSlotsContextKey struct{}
 type mcpDispatchQueueWaitContextKey struct{}
 type mcpDispatchUnboundedContextKey struct{}
 type mcpDispatchSlotLeaseContextKey struct{}
+type mcpDispatchCompletionOwnerContextKey struct{}
+
+type mcpDispatchCompletionOwner struct {
+	lease *mcpDispatchSlotLease
+	grant *mcpDispatchSlotGrant
+}
 
 // mcpDispatchSlotLease lets the handler running a dispatch give its slot back
 // before it returns.
@@ -442,6 +448,46 @@ func (l *mcpDispatchSlotLease) scheduledGrant(grant *mcpDispatchSlotGrant, fallb
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return grant.scheduled
+}
+
+// WithMCPDispatchCompletionOwner captures the dispatch identity before a
+// middleware firewall forks its handler. Nested firewalls inherit that identity
+// even after the outer dispatcher returns and detaches its live lease. A later
+// attach can never adopt the abandoned handler's completion.
+func WithMCPDispatchCompletionOwner(ctx context.Context) context.Context {
+	if _, ok := ctx.Value(mcpDispatchCompletionOwnerContextKey{}).(mcpDispatchCompletionOwner); ok {
+		return ctx
+	}
+	lease := mcpDispatchSlotLeaseForContext(ctx)
+	if lease == nil {
+		return ctx
+	}
+	lease.mu.Lock()
+	grant := lease.grant
+	lease.mu.Unlock()
+	if grant == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, mcpDispatchCompletionOwnerContextKey{}, mcpDispatchCompletionOwner{lease: lease, grant: grant})
+}
+
+// RetainMCPDispatchCompletion joins an abandoned inner handler to its captured
+// dispatch's physical drain lifetime. A middleware firewall calls this before
+// returning without its handler, then calls the returned idempotent release
+// only when that handler actually returns. It releases logical admission but
+// preserves the process drain bound. Nil means no bounded dispatch remains;
+// an explicitly released passive wait must never reacquire its old capacity.
+func RetainMCPDispatchCompletion(ctx context.Context) func() {
+	owner, ok := ctx.Value(mcpDispatchCompletionOwnerContextKey{}).(mcpDispatchCompletionOwner)
+	if !ok {
+		return nil
+	}
+	owner.lease.mu.Lock()
+	defer owner.lease.mu.Unlock()
+	if owner.grant.scheduled == nil {
+		return nil
+	}
+	return owner.grant.scheduled.retainCompletion()
 }
 
 func withMCPDispatchQueueWait(ctx context.Context, wait time.Duration) context.Context {

@@ -84,6 +84,10 @@ type mcpScheduledGrant struct {
 	state     mcpGrantState
 	protocol  bool
 	cancelled bool
+	// A middleware firewall can return before the handler it abandoned.
+	// Keep the physical completion charge until both have returned.
+	retainedHandlers int
+	dispatchReturned bool
 }
 
 func mcpSchedulerFor(slots chan struct{}) *mcpDispatchScheduler {
@@ -473,7 +477,32 @@ func (g *mcpScheduledGrant) completeLocked(now time.Time) {
 func (g *mcpScheduledGrant) complete() {
 	g.pool.owner.mu.Lock()
 	defer g.pool.owner.mu.Unlock()
-	g.completeLocked(time.Now())
+	g.dispatchReturned = true
+	if g.retainedHandlers == 0 {
+		g.completeLocked(time.Now())
+	}
+}
+
+func (g *mcpScheduledGrant) retainCompletion() func() {
+	c := g.pool.owner
+	c.mu.Lock()
+	if g.state == mcpGrantReleased {
+		c.mu.Unlock()
+		return nil
+	}
+	g.retainedHandlers++
+	c.mu.Unlock()
+	// The middleware stopped waiting, just like transport cancellation.
+	// Logical capacity returns, while unfinished work stays drain-bounded.
+	g.cancel()
+	return sync.OnceFunc(func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		g.retainedHandlers--
+		if g.retainedHandlers == 0 && g.dispatchReturned {
+			g.completeLocked(time.Now())
+		}
+	})
 }
 
 // cancel detaches at most four physically unfinished handlers process-wide.
