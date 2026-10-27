@@ -235,8 +235,15 @@ func TestEditOperationRealBatchDetachedOriginalAndDuplicate(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	replied := make(chan *mcp.CallToolResult, 1)
-	go func() { result, _ := h(ctx, req); replied <- result }()
+	type callerReply struct {
+		result *mcp.CallToolResult
+		err    error
+	}
+	replied := make(chan callerReply, 1)
+	go func() {
+		result, err := h(ctx, req)
+		replied <- callerReply{result: result, err: err}
+	}()
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):
@@ -244,8 +251,9 @@ func TestEditOperationRealBatchDetachedOriginalAndDuplicate(t *testing.T) {
 	}
 	cancel()
 	select {
-	case result := <-replied:
-		require.True(t, result.IsError, "original caller is abandoned while disk work is still held")
+	case reply := <-replied:
+		require.ErrorIs(t, reply.err, context.Canceled, "caller cancellation is a Go error, not an in-band tool result")
+		require.Nil(t, reply.result, "actual disk work remains held after the caller stops waiting")
 	case <-time.After(5 * time.Second):
 		t.Fatal("original caller did not receive its cancellation reply")
 	}
