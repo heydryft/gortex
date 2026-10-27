@@ -52,11 +52,14 @@ type mcpDispatchSessionQueue struct {
 }
 
 type mcpDispatchWaiter struct {
-	class    MCPDispatchClass
-	session  string
-	queuedAt time.Time
-	done     chan struct{}
-	grant    *mcpScheduledGrant
+	class     MCPDispatchClass
+	session   string
+	queuedAt  time.Time
+	expiresAt time.Time
+	ctx       context.Context
+	err       error
+	done      chan struct{}
+	grant     *mcpScheduledGrant
 }
 
 type mcpGrantState uint8
@@ -149,6 +152,22 @@ func (s *mcpDispatchScheduler) scheduleLocked() {
 			for offset := 0; offset < len(lane.sessions); offset++ {
 				index := (lane.next + offset) % len(lane.sessions)
 				q := lane.sessions[index]
+				waiter := q.requests[0]
+				now := time.Now()
+				if waiter.ctx != nil && waiter.ctx.Err() != nil {
+					waiter = s.popLocked(class, index)
+					waiter.err = fmt.Errorf("%w: %w", errMCPDispatchNotStarted, waiter.ctx.Err())
+					close(waiter.done)
+					admitted = true
+					break
+				}
+				if !waiter.expiresAt.IsZero() && !now.Before(waiter.expiresAt) {
+					waiter = s.popLocked(class, index)
+					waiter.err = &mcpDispatchBusyError{waited: now.Sub(waiter.queuedAt), retryAfter: s.retryAfterLocked(class), lane: class}
+					close(waiter.done)
+					admitted = true
+					break
+				}
 				if !s.eligibleLocked(class, q.session) {
 					continue
 				}
@@ -156,23 +175,7 @@ func (s *mcpDispatchScheduler) scheduleLocked() {
 				if grant == nil {
 					return
 				}
-				waiter := q.requests[0]
-				q.requests[0] = nil
-				q.requests = q.requests[1:]
-				lane.queued--
-				if len(q.requests) == 0 {
-					copy(lane.sessions[index:], lane.sessions[index+1:])
-					lane.sessions[len(lane.sessions)-1] = nil
-					lane.sessions = lane.sessions[:len(lane.sessions)-1]
-					lane.next = index
-				} else {
-					lane.next = index + 1
-				}
-				if len(lane.sessions) > 0 {
-					lane.next %= len(lane.sessions)
-				} else {
-					lane.next = 0
-				}
+				waiter = s.popLocked(class, index)
 				waiter.grant = grant
 				close(waiter.done)
 				admitted = true
@@ -186,6 +189,31 @@ func (s *mcpDispatchScheduler) scheduleLocked() {
 			return
 		}
 	}
+}
+
+// popLocked advances the round-robin cursor for both grants and terminal
+// queued outcomes. Empty session queues never remain in the ring.
+func (s *mcpDispatchScheduler) popLocked(class MCPDispatchClass, index int) *mcpDispatchWaiter {
+	lane := &s.lanes[class]
+	q := lane.sessions[index]
+	waiter := q.requests[0]
+	q.requests[0] = nil
+	q.requests = q.requests[1:]
+	lane.queued--
+	if len(q.requests) == 0 {
+		copy(lane.sessions[index:], lane.sessions[index+1:])
+		lane.sessions[len(lane.sessions)-1] = nil
+		lane.sessions = lane.sessions[:len(lane.sessions)-1]
+		lane.next = index
+	} else {
+		lane.next = index + 1
+	}
+	if len(lane.sessions) > 0 {
+		lane.next %= len(lane.sessions)
+	} else {
+		lane.next = 0
+	}
+	return waiter
 }
 
 func (s *mcpDispatchScheduler) enqueueLocked(waiter *mcpDispatchWaiter) {
@@ -274,6 +302,10 @@ func (s *mcpDispatchScheduler) acquire(ctx context.Context, class MCPDispatchCla
 		return nil, &mcpDispatchBusyError{retryAfter: retry, lane: class}
 	}
 	waiter := &mcpDispatchWaiter{class: class, session: session, queuedAt: now, done: make(chan struct{})}
+	waiter.ctx = ctx
+	if wait > 0 {
+		waiter.expiresAt = now.Add(wait)
+	}
 	s.enqueueLocked(waiter)
 	s.scheduleLocked()
 	// Even with queuing off, a request may use capacity unavailable to the
@@ -313,6 +345,10 @@ func (s *mcpDispatchScheduler) acquire(ctx context.Context, class MCPDispatchCla
 	if waiter.grant != nil {
 		s.owner.mu.Unlock()
 		return waiter.grant, nil
+	}
+	if waiter.err != nil {
+		s.owner.mu.Unlock()
+		return nil, waiter.err
 	}
 	s.removeLocked(waiter)
 	retry := s.retryAfterLocked(class)

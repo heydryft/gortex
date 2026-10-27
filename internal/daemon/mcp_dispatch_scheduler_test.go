@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -251,5 +252,54 @@ func TestDispatchSchedulerRetryFollowsBoundedDrainRate(t *testing.T) {
 	lane.queued = 4
 	if got := pool.retryAfterLocked(MCPDispatchFast); got != 5*time.Second {
 		t.Errorf("slow frontier retry=%s", got)
+	}
+}
+
+func TestDispatchSchedulerCannotGrantExpiredQueueBudgetAfterTimerWins(t *testing.T) {
+	pool := testDispatchPool(1)
+	holder := takeScheduled(t, pool, MCPDispatchMutating, "holder")
+	admission := newMCPDispatchAdmission()
+	ctx, cancel := context.WithCancel(withMCPDispatchAdmission(withMCPDispatchQueueWait(t.Context(), 20*time.Millisecond), admission))
+	defer cancel()
+	result := make(chan scheduledReply, 1)
+	go func() {
+		grant, err := pool.acquire(ctx, MCPDispatchFast, "reader")
+		result <- scheduledReply{grant, err}
+	}()
+	select {
+	case <-admission.done:
+	case <-time.After(time.Second):
+		t.Fatal("reader did not queue")
+	}
+	func() {
+		pool.owner.mu.Lock()
+		defer pool.owner.mu.Unlock()
+		lane := &pool.lanes[MCPDispatchFast]
+		if len(lane.sessions) != 1 {
+			t.Fatalf("queued sessions=%d", len(lane.sessions))
+		}
+		expires := lane.sessions[0].requests[0].expiresAt
+		// Hold the admission mutex across the actual queue deadline. This lets
+		// the acquisition timer fire but prevents its caller from removing the
+		// waiter, reproducing a late capacity-release race without a sleep oracle.
+		timer := time.NewTimer(max(0, time.Until(expires)))
+		defer timer.Stop()
+		<-timer.C
+		holder.completeLocked(time.Now())
+	}()
+	select {
+	case reply := <-result:
+		if reply.grant != nil {
+			reply.grant.complete()
+			t.Fatal("expired queued request acquired late capacity")
+		}
+		if !errors.Is(reply.err, errMCPDispatchSaturated) {
+			t.Fatalf("expired queue error=%v", reply.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expired queue did not terminate")
+	}
+	if len(pool.slots) != 0 {
+		t.Fatalf("expired queue leaked %d capacity tokens", len(pool.slots))
 	}
 }
