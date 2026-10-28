@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,8 +74,12 @@ func TestConfiguredLoadingPublishedBeforeServing(t *testing.T) {
 				} `json:"result"`
 			}
 			require.NoError(t, json.Unmarshal(initialized, &initReply))
-			assert.Contains(t, initReply.Result.Instructions, gortexmcp.ServerInstructionsLoading("startup", "starting", 0),
-				"the first real initialize must carry the loading variant before warmup")
+			expectedInstructions := gortexmcp.ServerInstructionsLoading("startup", "starting", 0)
+			if strings.HasPrefix(name, "linked") {
+				expectedInstructions = gortexmcp.ServerInstructionsIdentityPending()
+			}
+			assert.Contains(t, initReply.Result.Instructions, expectedInstructions,
+				"the first real initialize must carry an honest loading variant before identity warmup")
 			require.NoError(t, client.WriteMCPFrame([]byte(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_symbols","arguments":{"query":"Startup"}}}`)))
 			frame, err := client.ReadMCPFrame()
 			require.NoError(t, err)
@@ -83,6 +88,12 @@ func TestConfiguredLoadingPublishedBeforeServing(t *testing.T) {
 			data := errorData(t, reply)
 			assert.Equal(t, "repo_loading", data["error_code"])
 			assert.Equal(t, true, data["retryable"])
+			if strings.HasPrefix(name, "linked") {
+				assert.Equal(t, "identity_pending", data["reason"])
+				assert.NotContains(t, data, "repo_path", "an unresolved lexical declaration cannot name a linked request's family")
+			} else {
+				assert.Equal(t, root, data["repo_path"])
+			}
 			assert.Contains(t, data, "phase")
 			assert.Contains(t, data, "percent")
 			assert.NotContains(t, string(frame), "gortex track")
@@ -91,6 +102,19 @@ func TestConfiguredLoadingPublishedBeforeServing(t *testing.T) {
 	}
 	assert.Empty(t, mi.GetMetadata("startup"), "pending declarations must never register or admit graph access")
 	untracked := &daemon.Session{ID: "unconfigured", CWD: t.TempDir()}
+	before := errorData(t, dispatchJSON(t, d, untracked,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search_symbols","arguments":{"query":"Startup"}}}`))
+	assert.Equal(t, "repo_loading", before["error_code"])
+	assert.Equal(t, "identity_pending", before["reason"])
+	assert.NotContains(t, before, "repo_path")
+	// The real existing warmup owner now resolves identity. A linked path can
+	// then name its configured family and an unrelated path is truly negative.
+	announceConfiguredRepos(state)
+	linkedSession := &daemon.Session{ID: "resolved-linked", CWD: linked}
+	after := errorData(t, dispatchJSON(t, d, linkedSession,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"search_symbols","arguments":{"query":"Startup"}}}`))
+	assert.Equal(t, "repo_loading", after["error_code"])
+	assert.Equal(t, root, after["repo_path"])
 	assert.Equal(t, "repo_not_tracked", errorCode(dispatchJSON(t, d, untracked,
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search_symbols","arguments":{"query":"Startup"}}}`)))
 }
