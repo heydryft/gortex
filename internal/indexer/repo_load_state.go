@@ -73,10 +73,14 @@ type RepoLoad struct {
 	// never touches the filesystem.
 	key          string
 	canonicalKey string
-	// commonDir is Root's shared git directory, read once when the record is
-	// created, so a linked worktree of a loading primary is recognised without
-	// spawning git on the admission path.
+	// commonDir is the shared git directory resolved off the serving path.
+	// A declaration uses only root/.git as a loading-only candidate until
+	// warmup resolves identity; a request must independently resolve its own
+	// linked-worktree marker before this can produce a pending refusal.
 	commonDir string
+	// identityPending distinguishes a lexical boot declaration from the
+	// filesystem identity warmup fills in. It grants no graph admission.
+	identityPending bool
 }
 
 // Label names the repository in user-facing text: its prefix, or its root
@@ -183,14 +187,27 @@ func absRepoRoot(path string) string {
 	return pathkey.NormalizeVolume(abs)
 }
 
+// DeclareRepos publishes configured roots before the daemon listens without
+// touching those roots, resolving symlinks or reading git metadata. A hung
+// configured mount must not delay the listener or hide the other declarations.
+// ExpectRepos fills in filesystem identity and missing-path state during warmup.
+func (mi *MultiIndexer) DeclareRepos(entries []config.RepoEntry) {
+	mi.expectRepos(entries, false)
+}
+
 // ExpectRepos records the configured repositories a start is about to load.
 //
-// Called once before checkout seeding, so a configured repository reads as
-// loading from the moment the socket serves, and again when warmup takes its
-// own snapshot of the config. A repository already recorded keeps its record;
+// Called off the serving path before checkout seeding and again when warmup
+// takes its own snapshot of the config. DeclareRepos publishes lexical roots
+// before the socket serves; this enriches those declarations without resetting
+// progress or a registration that raced with warmup. A repository already recorded keeps its record;
 // one that is no longer configured and not registered is dropped, so a stale
 // entry can never read as loading forever.
 func (mi *MultiIndexer) ExpectRepos(entries []config.RepoEntry) {
+	mi.expectRepos(entries, true)
+}
+
+func (mi *MultiIndexer) expectRepos(entries []config.RepoEntry, inspect bool) {
 	if mi == nil {
 		return
 	}
@@ -200,6 +217,7 @@ func (mi *MultiIndexer) ExpectRepos(entries []config.RepoEntry) {
 		wanted := make(map[int]bool, len(entries))
 		addedKeys := make(map[string]bool)
 		var added []RepoLoad
+		identityChanged := false
 		for _, entry := range entries {
 			root := absRepoRoot(entry.Path)
 			if root == "" || addedKeys[pathkey.IdentityKey(root)] {
@@ -207,6 +225,25 @@ func (mi *MultiIndexer) ExpectRepos(entries []config.RepoEntry) {
 			}
 			if i, ok := current.find(root); ok {
 				wanted[i] = true
+				if inspect && records[i].identityPending {
+					rec := &records[i]
+					resolved := newRepoLoad(root, rec.Prefix, rec.State, rec.Since)
+					rec.canonicalKey, rec.commonDir = resolved.canonicalKey, resolved.commonDir
+					rec.identityPending = false
+					if rec.State == RepoLoadQueued {
+						if info, err := os.Stat(root); err != nil || !info.IsDir() {
+							rec.State, rec.Reason, rec.Since = RepoLoadMissing, "the configured path does not exist", now
+						}
+					}
+					identityChanged = true
+				}
+				continue
+			}
+			if !inspect {
+				rec := RepoLoad{Root: root, Prefix: config.ResolvePrefix(entry), State: RepoLoadQueued,
+					Since: now, key: pathkey.IdentityKey(root), commonDir: filepath.Join(root, ".git"), identityPending: true}
+				added = append(added, rec)
+				addedKeys[rec.key] = true
 				continue
 			}
 			state := RepoLoadQueued
@@ -226,7 +263,7 @@ func (mi *MultiIndexer) ExpectRepos(entries []config.RepoEntry) {
 			}
 		}
 		next = append(next, added...)
-		return next, len(added) > 0 || len(next) != len(records)
+		return next, identityChanged || len(added) > 0 || len(next) != len(records)
 	})
 }
 

@@ -5,20 +5,27 @@ import (
 	"github.com/zzet/gortex/internal/indexer"
 )
 
-// announceConfiguredRepos makes every configured repository read as loading.
-//
-// The warmup goroutine calls it first, ahead of checkout seeding rather than
-// when warmup reaches its job loop: seeding takes seconds on a large worktree
-// farm, and for that whole window the admission gate otherwise told sessions
-// their configured repository was untracked. It is not called before Listen:
-// it stats every configured root, and a hung mount must not keep the socket
-// from coming up.
+// listenConfiguredDaemon publishes lexical configured roots before opening
+// either listener. It performs no filesystem validation of those roots; warmup
+// does that later so a hung mount cannot delay serving other configured repos.
+func listenConfiguredDaemon(srv *daemon.Server, state *daemonState) error {
+	if state != nil && state.multiIndexer != nil && state.configManager != nil {
+		if gc := state.configManager.Global(); gc != nil {
+			state.multiIndexer.DeclareRepos(gc.ReposSnapshot())
+		}
+	}
+	return srv.Listen()
+}
+
+// announceConfiguredRepos fills the declarations' filesystem identity before
+// checkout seeding. Serving has already started, so filesystem work stays here
+// rather than in the lexical declaration that precedes Listen.
 func announceConfiguredRepos(state *daemonState) {
 	if state == nil || state.multiIndexer == nil || state.configManager == nil {
 		return
 	}
 	if gc := state.configManager.Global(); gc != nil {
-		state.multiIndexer.ExpectRepos(gc.Repos)
+		state.multiIndexer.ExpectRepos(gc.ReposSnapshot())
 	}
 }
 

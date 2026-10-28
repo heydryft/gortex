@@ -250,3 +250,49 @@ func TestPrimaryRegisteredStartsTheCoordinatorsThatWaitedForIt(t *testing.T) {
 	require.Eventually(t, func() bool { return f.lc.hasCoordinator(checkout.CheckoutID) },
 		5*time.Second, 20*time.Millisecond, "the primary's registration must start the coordinator that waited for it")
 }
+
+func TestDeclareRepos_DefersFilesystemIdentityUntilWarmup(t *testing.T) {
+	mi := newRepoLoadTestMulti(t)
+	missing := filepath.Join(t.TempDir(), "not-mounted")
+	entries := []config.RepoEntry{{Path: missing, Name: "pending"}, {Path: missing}}
+	mi.DeclareRepos(entries)
+	require.Len(t, mi.RepoLoads(), 1)
+	rec, ok := mi.RepoLoadFor(missing)
+	require.True(t, ok)
+	assert.Equal(t, RepoLoadQueued, rec.State, "declaration must not stat a configured root before Listen")
+	assert.True(t, rec.identityPending)
+	assert.Empty(t, rec.Reason)
+	rec, pending := mi.PendingRepoForPath(filepath.Join(missing, "pkg"))
+	require.True(t, pending)
+	assert.Equal(t, "pending", rec.Prefix)
+
+	mi.ExpectRepos(entries)
+	rec, ok = mi.RepoLoadFor(missing)
+	require.True(t, ok)
+	assert.Equal(t, RepoLoadMissing, rec.State, "warmup still diagnoses missing paths")
+	assert.False(t, rec.identityPending)
+}
+
+func TestDeclareRepos_WarmupEnrichmentPreservesRunningState(t *testing.T) {
+	mi := newRepoLoadTestMulti(t)
+	root, worktree := linkedWorktreeLayout(t)
+	entries := []config.RepoEntry{{Path: root}}
+	mi.DeclareRepos(entries)
+	rec, pending := mi.PendingRepoForPath(filepath.Join(worktree, "pkg"))
+	require.True(t, pending, "a primary declaration must cover independently resolved linked-worktree markers")
+	assert.Equal(t, root, rec.Root)
+
+	mi.StartRepoLoad(root)
+	before, _ := mi.RepoLoadFor(root)
+	mi.ExpectRepos(entries)
+	after, ok := mi.RepoLoadFor(root)
+	require.True(t, ok)
+	assert.Equal(t, RepoLoadRunning, after.State)
+	assert.Equal(t, before.Since, after.Since)
+	assert.False(t, after.identityPending)
+	_, pending = mi.PendingRepoForPath(worktree)
+	assert.True(t, pending)
+
+	mi.DeclareRepos(nil)
+	assert.Empty(t, mi.RepoLoads(), "removed declarations must not remain loading forever")
+}
