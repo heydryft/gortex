@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -34,6 +35,35 @@ type migrationProxyWaitWitness struct {
 	State         daemon.RuntimeState `json:"state"`
 }
 
+type migrationProxyHelperInput struct {
+	Root       string `json:"root"`
+	ParentPID  int    `json:"parent_pid"`
+	SpawnLock  string `json:"spawn_lock"`
+	GlobalPath string `json:"global_config"`
+}
+
+// The helper's TestMain installs a new sandbox before this test runs. Restore
+// only these paths derived from its parent's fresh short fixture, not an
+// inherited environment dump or any of the user's per-user state.
+func migrationProxyOwnedEnv(root string) map[string]string {
+	home := filepath.Join(root, "home")
+	return map[string]string{
+		"HOME": home, "USERPROFILE": home,
+		"AppData":                 filepath.Join(home, "AppData", "Roaming"),
+		"LocalAppData":            filepath.Join(home, "AppData", "Local"),
+		"XDG_CONFIG_HOME":         filepath.Join(root, "config"),
+		"XDG_DATA_HOME":           filepath.Join(root, "data"),
+		"XDG_CACHE_HOME":          filepath.Join(root, "cache"),
+		"XDG_STATE_HOME":          filepath.Join(root, "state"),
+		"XDG_RUNTIME_DIR":         filepath.Join(root, "runtime"),
+		"GORTEX_DAEMON_SOCKET":    filepath.Join(root, "s"),
+		"GORTEX_DAEMON_PIDFILE":   filepath.Join(root, "p"),
+		"GORTEX_DAEMON_STATEFILE": filepath.Join(root, "state.json"),
+		"GORTEX_DAEMON_LOGFILE":   filepath.Join(root, "daemon.log"),
+		"GORTEX_DAEMON_SNAPSHOT":  filepath.Join(root, "daemon.gob.gz"),
+	}
+}
+
 // This helper runs the real MCP selection and proxy in a fresh process. Only
 // that process shortens the private inactivity budget. Its liveness seam still
 // returns the actual socket result; the extra lock/heartbeat reads only record
@@ -43,8 +73,22 @@ func TestMigrationWindowMCPProxyHelper(t *testing.T) {
 		t.Skip("invoked only by TestMCPWaitsThroughMigrationWindow")
 	}
 	spawnLockInactivityTimeout = migrationProxyTestInactivity
-	witnessDir := os.Getenv("GORTEX_TEST_MIGRATION_WITNESS")
-	require.NotEmpty(t, witnessDir)
+	inputPath := os.Getenv("GORTEX_TEST_MIGRATION_INPUT")
+	require.True(t, filepath.IsAbs(inputPath))
+	body, err := os.ReadFile(inputPath)
+	require.NoError(t, err)
+	var input migrationProxyHelperInput
+	require.NoError(t, json.Unmarshal(body, &input))
+	require.Equal(t, os.Getppid(), input.ParentPID)
+	require.True(t, filepath.IsAbs(input.Root))
+	require.True(t, strings.HasPrefix(filepath.Base(input.Root), "gx"))
+	require.Equal(t, filepath.Join(input.Root, "migration-helper-input.json"), inputPath)
+	for name, value := range migrationProxyOwnedEnv(input.Root) {
+		t.Setenv(name, value)
+	}
+	require.Equal(t, input.SpawnLock, daemon.SpawnLockPath())
+	require.Equal(t, input.GlobalPath, config.DefaultGlobalConfigPath())
+	witnessDir := input.Root
 	checks := 0
 	isDaemonRunning = func() bool {
 		running := daemon.IsRunning()
@@ -88,9 +132,9 @@ func TestMigrationWindowMCPProxyHelper(t *testing.T) {
 func TestMCPWaitsThroughMigrationWindow(t *testing.T) {
 	base := testenv.ShortTempDir(t)
 	testenv.SandboxAt(t, filepath.Join(base, "home"))
-	t.Setenv("GORTEX_DAEMON_SOCKET", filepath.Join(base, "s"))
-	t.Setenv("GORTEX_DAEMON_PIDFILE", filepath.Join(base, "p"))
-	t.Setenv("GORTEX_DAEMON_STATEFILE", filepath.Join(base, "state.json"))
+	for name, value := range migrationProxyOwnedEnv(base) {
+		t.Setenv(name, value)
+	}
 	t.Setenv("GORTEX_AUTOSTART", "1")
 	t.Setenv("GORTEX_TELEMETRY", "0")
 	t.Setenv("GORTEX_TOOLS", "")
@@ -173,7 +217,13 @@ func TestMCPWaitsThroughMigrationWindow(t *testing.T) {
 	defer cancel()
 	child := exec.CommandContext(ctx, executable, "-test.run=^TestMigrationWindowMCPProxyHelper$")
 	child.Dir = root
-	child.Env = append(os.Environ(), "GORTEX_TEST_MIGRATION_PROXY=1", "GORTEX_TEST_MIGRATION_WITNESS="+base)
+	inputPath := filepath.Join(base, "migration-helper-input.json")
+	input, err := json.Marshal(migrationProxyHelperInput{
+		Root: base, ParentPID: os.Getpid(), SpawnLock: daemon.SpawnLockPath(), GlobalPath: globalPath,
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(inputPath, input, 0o600))
+	child.Env = append(os.Environ(), "GORTEX_TEST_MIGRATION_PROXY=1", "GORTEX_TEST_MIGRATION_INPUT="+inputPath)
 	stdin, err := child.StdinPipe()
 	require.NoError(t, err)
 	stdout, err := child.StdoutPipe()
