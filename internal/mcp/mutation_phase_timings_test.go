@@ -23,7 +23,9 @@ func TestMutationStatusWithoutTimelineKeepsMissingTimingNull(t *testing.T) {
 	require.NoError(t, json.Unmarshal(encoded, &wire))
 	phases := wire["phases_ms"].(map[string]any)
 	states := wire["phase_states"].(map[string]any)
-	require.Len(t, phases, 15)
+	require.Len(t, phases, 17) // original15 plus actual cohort/batch admission envelopes
+	require.Contains(t, phases, "cohort_admission")
+	require.Contains(t, phases, "batch_admission")
 	for name, ms := range phases {
 		require.Nil(t, ms, name)
 		require.Equal(t, "not_observed", states[name])

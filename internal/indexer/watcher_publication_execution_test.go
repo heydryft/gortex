@@ -60,6 +60,7 @@ func requirePointExecution(t *testing.T, record *PublicationPhaseRecord, want bo
 		require.Nil(t, record.Snapshot().laneWait, "rejected/shared attempts must not borrow the winner's lane wait")
 		require.Nil(t, record.Snapshot().debounce, "rejected/shared attempts must not borrow the winner's quiet timer")
 		require.Nil(t, record.Snapshot().attemptWindow, "rejected/shared attempts must not publish the winner's physical window")
+		require.Nil(t, record.Snapshot().admissions, "rejected/shared attempts must not borrow admission measurements")
 		require.Nil(t, record.Snapshot().patchLaps, "rejected attempts must not transfer any scalar evidence")
 	}
 }

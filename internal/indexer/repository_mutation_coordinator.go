@@ -365,6 +365,10 @@ func (c *repositoryMutationCoordinator) runExclusiveMode(
 	// Batch admission precedes the repository lane. Otherwise a queued writer
 	// can acquire the batch gate while this call owns the lane, then wait for
 	// that lane itself — a gate/lane cycle that prevents either side advancing.
+	var batchAdmission canonicalAdmissionSpan
+	if batchMutationGate != nil || c.batchAdmissionHook != nil {
+		batchAdmission = PublicationStampsFrom(ctx).beginCanonicalAdmission(canonicalBatchAdmission)
+	}
 	if batchMutationGate != nil {
 		batchMutationGate.RLock()
 		defer batchMutationGate.RUnlock()
@@ -372,6 +376,7 @@ func (c *repositoryMutationCoordinator) runExclusiveMode(
 	if hook := c.batchAdmissionHook; hook != nil {
 		hook()
 	}
+	batchAdmission.end()
 	if err := ctx.Err(); err != nil {
 		return err
 	}

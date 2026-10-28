@@ -2017,7 +2017,12 @@ func (w *Watcher) runPointMutationObserved(path string, kind ChangeKind, generat
 	// otherwise puts every path into the patch path at once, contending for the
 	// repository mutation lane. Admission pressure retains this generation and
 	// its waiters instead of turning a bounded wait into a terminal receipt.
+	var cohortAdmission canonicalAdmissionSpan
+	if publication != nil {
+		cohortAdmission = publication.stamps.beginCanonicalAdmission(canonicalCohortAdmission)
+	}
 	release, admissionErr := w.admitMutationWork(path)
+	cohortAdmission.end()
 	if admissionErr != nil {
 		if errors.Is(admissionErr, errWatcherStopped) {
 			w.completeMutationWaitersIfCurrent(path, generation, errWatcherStopped)

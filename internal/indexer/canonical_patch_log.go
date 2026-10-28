@@ -6,14 +6,16 @@ import "go.uber.org/zap/zapcore"
 // before final watcher winner validation, so it must never promise that these
 // observations will be attached to a receipt. Encoding only formats the copy.
 type canonicalPatchLog struct {
-	ticket        uint64
-	values        [canonicalPatchLapCount]float64
-	states        [canonicalPatchLapCount]string
-	counts        [canonicalPatchLapCount]uint64
-	laneWaitMS    *float64
-	laneWaitState string
-	debounceMS    *float64
-	debounceState string
+	ticket          uint64
+	values          [canonicalPatchLapCount]float64
+	states          [canonicalPatchLapCount]string
+	counts          [canonicalPatchLapCount]uint64
+	laneWaitMS      *float64
+	laneWaitState   string
+	debounceMS      *float64
+	debounceState   string
+	admissionMS     [canonicalAdmissionCount]*float64
+	admissionStates [canonicalAdmissionCount]string
 }
 
 func (s *PublicationStamps) snapshotPatchLog() (canonicalPatchLog, bool) {
@@ -25,6 +27,7 @@ func (s *PublicationStamps) snapshotPatchLog() (canonicalPatchLog, bool) {
 	evidence := s.patchLaps.freeze(origin)
 	lane := s.laneWait.freeze(origin)
 	debounce := s.debounce
+	admissions := s.freezeCanonicalAdmissions(origin)
 	ticket := s.patchLaps.ticket
 	offsets := make(map[PublicationPhase]int64, len(s.marks)+1)
 	if !s.patchLaps.enqueued.IsZero() {
@@ -39,11 +42,15 @@ func (s *PublicationStamps) snapshotPatchLog() (canonicalPatchLog, bool) {
 	projection := EditPhaseTimings{Milliseconds: make(map[string]*float64, canonicalPatchLapCount), States: make(map[string]string, canonicalPatchLapCount)}
 	evidence.project(offsets, false, &projection)
 	lane.project(offsets, false, &projection)
+	admissions.project(offsets, false, &lane, &projection)
 	projection.States["debounce"] = "not_observed"
 	if !debounce.started.IsZero() {
 		debounce.freeze(origin).project(offsets, false, &projection)
 	}
 	out := canonicalPatchLog{ticket: ticket, laneWaitMS: projection.Milliseconds["lane_wait"], laneWaitState: projection.States["lane_wait"], debounceMS: projection.Milliseconds["debounce"], debounceState: projection.States["debounce"]}
+	for i, name := range canonicalAdmissionNames {
+		out.admissionMS[i], out.admissionStates[i] = projection.Milliseconds[name], projection.States[name]
+	}
 	for i, name := range canonicalPatchLapNames {
 		out.states[i], out.counts[i] = projection.States[name], evidence.laps[i].done
 		if ms := projection.Milliseconds[name]; ms != nil {
@@ -63,6 +70,12 @@ func (p canonicalPatchLog) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 	enc.AddString("attempt_lane_wait_state", p.laneWaitState)
 	if p.laneWaitMS != nil {
 		enc.AddFloat64("attempt_lane_wait_ms", *p.laneWaitMS)
+	}
+	for i, name := range canonicalAdmissionNames {
+		enc.AddString("attempt_"+name+"_state", p.admissionStates[i])
+		if p.admissionMS[i] != nil {
+			enc.AddFloat64("attempt_"+name+"_ms", *p.admissionMS[i])
+		}
 	}
 	for i, name := range canonicalPatchLapNames {
 		enc.AddString("attempt_"+name+"_state", p.states[i])

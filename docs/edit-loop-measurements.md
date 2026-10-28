@@ -15,7 +15,8 @@ lap has been measured, or that the phase-sum acceptance criterion is met.
 - Acknowledgement: `dispatcher_queue`, `middleware`, `parse`, `disk_write`,
   `publish`, and the explicit additional `reindex_wait`.
 - Patch: `debounce`, `lane_wait`, `gate_wait`, `patch_parse`, `apply`,
-  `search_lap`, `resolve`, `mtimes`, and `derived`.
+  `search_lap`, `resolve`, `mtimes`, and `derived`, plus the additive actual
+  `cohort_admission` and `batch_admission` envelopes.
 
 A duration is a monotonic millisecond number, or `null`. `phase_states` gives
 the evidence for each key:
@@ -86,6 +87,17 @@ separate from executor-contained laps and is published only for that exact
 winner, with enqueue/cycle/executor containment validated. Canceled waits have
 no grant; rejected or coalesced attempts do not borrow another attempt's pair.
 This does not measure the cohort semaphore, batch lock, or full patch lifetime.
+
+Two additive admission envelopes use actual calls: `cohort_admission` surrounds
+the watcher's bounded cohort-slot admission, and `batch_admission` surrounds the
+repository batch RLock/admission hook when either exists. They include their own
+call/lock/hook work and are not pure repository lane waits. Complete pairs require
+exact winner ownership, ordered enqueue/cycle/executor/terminal boundaries, and
+cohort-before-batch-before-lane ordering. An absent batch lock/hook remains
+unobserved, rather than a fabricated measured zero. These pairs also extend the
+same immutable attempt log; setup, inspection and finalization gaps remain
+unclassified, so accounting is still partial. Initial debounce and retry backoff
+precede P and must never be summed against P's smaller wall.
 
 The same optional attempt-local collector now follows the actual standalone or
 MultiWatcher point executor to its precise derived-tail call. The raw pair

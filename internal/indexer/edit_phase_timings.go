@@ -30,7 +30,7 @@ var editAckPhaseNames = [...]string{
 }
 
 var editPatchPhaseNames = [...]string{
-	"debounce", "lane_wait", "gate_wait", "patch_parse", "apply", "search_lap", "resolve", "mtimes", "derived",
+	"debounce", "cohort_admission", "batch_admission", "lane_wait", "gate_wait", "patch_parse", "apply", "search_lap", "resolve", "mtimes", "derived",
 }
 
 // EditTimings uses nanosecond offsets from the same-process monotonic clock,
@@ -78,6 +78,9 @@ func (s PublicationPhaseSnapshot) EditTimings() EditPhaseTimings {
 	if s.patchLaps != nil {
 		s.patchLaps.project(offsets, s.Terminal, &out)
 	}
+	if s.admissions != nil {
+		s.admissions.project(offsets, s.Terminal, s.laneWait, &out)
+	}
 	if s.debounce != nil {
 		s.debounce.project(offsets, s.Terminal, &out)
 	}
@@ -99,7 +102,7 @@ func (s PublicationPhaseSnapshot) EditTimings() EditPhaseTimings {
 	// Only subtract disjoint, wholly contained measured intervals. An invalid
 	// order leaves the residual unknown; never clamp it to a plausible zero.
 	var measured float64
-	for _, name := range []string{"disk_write", "publish", "debounce", "lane_wait", "gate_wait", "patch_parse", "apply", "search_lap", "resolve", "mtimes", "derived"} {
+	for _, name := range []string{"disk_write", "publish", "debounce", "cohort_admission", "batch_admission", "lane_wait", "gate_wait", "patch_parse", "apply", "search_lap", "resolve", "mtimes", "derived"} {
 		if out.States[name] == "invalid_order" || out.States[name] == "pending" {
 			return out
 		}

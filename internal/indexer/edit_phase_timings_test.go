@@ -13,7 +13,7 @@ func requireEditTimingKeys(t *testing.T, timings EditPhaseTimings) {
 	// Keep this census independent of the production arrays: adding or dropping
 	// a required lap must be an explicit wire-contract decision.
 	want := []string{"dispatcher_queue", "middleware", "parse", "disk_write", "publish", "reindex_wait",
-		"debounce", "lane_wait", "gate_wait", "patch_parse", "apply", "search_lap", "resolve", "mtimes", "derived"}
+		"debounce", "cohort_admission", "batch_admission", "lane_wait", "gate_wait", "patch_parse", "apply", "search_lap", "resolve", "mtimes", "derived"}
 	require.Len(t, timings.Milliseconds, len(want))
 	require.Len(t, timings.States, len(want))
 	for _, key := range want {

@@ -184,6 +184,7 @@ type PublicationPhaseRecord struct {
 	owner           weak.Pointer[PublicationPhaseRecorder] // membership only; never retains an expired recorder
 	acceptedAttempt *PublicationStamps                     // private exact winner witness, cleared on completion
 	attemptWindow   *canonicalAttemptWindow
+	admissions      *canonicalAdmissionEvidence
 }
 
 type publicationMark struct {
@@ -464,6 +465,7 @@ type PublicationPhaseSnapshot struct {
 	laneWait          *canonicalLaneWaitEvidence
 	debounce          *canonicalDebounceEvidence
 	attemptWindow     *canonicalAttemptWindow
+	admissions        *canonicalAdmissionEvidence
 }
 
 // Snapshot renders the record.
@@ -484,6 +486,7 @@ func (p *PublicationPhaseRecord) Snapshot() PublicationPhaseSnapshot {
 		laneWait:          p.laneWait,
 		debounce:          p.debounce,
 		attemptWindow:     p.attemptWindow,
+		admissions:        p.admissions,
 	}
 	for _, mark := range p.marks {
 		offset := mark.at.Sub(p.origin)
@@ -532,11 +535,12 @@ func (p *PublicationPhaseRecord) FinishBackgroundWork(completed bool) {
 // (view selection, admission, the parse gate, the write's own checks) is
 // exactly where a slow commit's time goes. The record absorbs them when it opens.
 type PublicationStamps struct {
-	mu        sync.Mutex
-	marks     []publicationMark
-	patchLaps *canonicalPatchLaps
-	laneWait  canonicalLaneWait
-	debounce  canonicalDebounceWait
+	mu         sync.Mutex
+	marks      []publicationMark
+	patchLaps  *canonicalPatchLaps
+	laneWait   canonicalLaneWait
+	debounce   canonicalDebounceWait
+	admissions [canonicalAdmissionCount]canonicalAdmissionPair
 }
 
 type publicationStampsKey struct{}
@@ -600,9 +604,12 @@ func (p *PublicationPhaseRecord) Absorb(stamps *PublicationStamps) {
 	var patch *canonicalPatchEvidence
 	var lane *canonicalLaneWaitEvidence
 	var debounce *canonicalDebounceEvidence
+	var admissions *canonicalAdmissionEvidence
 	if stamps.patchLaps != nil {
 		frozen := stamps.patchLaps.freeze(p.origin)
 		patch = &frozen
+		frozenAdmissions := stamps.freezeCanonicalAdmissions(p.origin)
+		admissions = &frozenAdmissions
 	}
 	if !stamps.laneWait.started.IsZero() || stamps.laneWait.invalid {
 		frozen := stamps.laneWait.freeze(p.origin)
@@ -625,5 +632,6 @@ func (p *PublicationPhaseRecord) Absorb(stamps *PublicationStamps) {
 		p.laneWait = lane
 		p.debounce = debounce
 		p.acceptedAttempt = stamps
+		p.admissions = admissions
 	}
 }
