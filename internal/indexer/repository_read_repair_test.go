@@ -3,11 +3,14 @@ package indexer
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"testing"
 	"time"
 	"weak"
+
+	"github.com/zzet/gortex/internal/graph"
 )
 
 func TestReadRepairAcceptanceRequiresConcreteOwnerAndBytes(t *testing.T) {
@@ -64,6 +67,33 @@ func TestReadRepairInertSameBytesCannotClaimEarlierPublication(t *testing.T) {
 		t.Fatal("actual accepted apply lost its content proof")
 	}
 	runtime.KeepAlive(owner)
+}
+
+func TestReadRepairRealBatchDistinguishesInertFromApply(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "value.go")
+	before := "package fixture\nfunc Value() int { return 1 }\n"
+	writeFile(t, path, before)
+	idx := newTestIndexer(graph.New())
+	idx.SetRepoPrefix("fixture")
+	t.Cleanup(idx.Close)
+	if _, err := idx.Index(root); err != nil {
+		t.Fatal(err)
+	}
+	// Exercise the real probe/inert/fresh-receipt path rather than merely
+	// checking an aggregate result count after a no-op mtime fast path.
+	inert := &ReadRepairObservation{path: "value.go"}
+	plan, _, failed, raced := idx.reindexIncrementalFilesBatched([]string{path}, nil, &reparsePendingEnrichmentBatch{readRepair: inert}, false)
+	if plan.InertFiles != 1 || len(failed) != 0 || len(raced) != 0 || inert.acceptedBlobSHA != "" {
+		t.Fatalf("inert batch claimed publication: plan=%+v failed=%v raced=%v proof=%q", plan, failed, raced, inert.acceptedBlobSHA)
+	}
+	after := before + "func Added() int { return Value() }\n"
+	writeFile(t, path, after)
+	applied := &ReadRepairObservation{path: "value.go"}
+	plan, _, failed, raced = idx.reindexIncrementalFilesBatched([]string{path}, nil, &reparsePendingEnrichmentBatch{readRepair: applied}, false)
+	if plan.InertFiles != 0 || len(failed) != 0 || len(raced) != 0 || applied.acceptedBlobSHA != readRepairBlobSHA([]byte(after)) {
+		t.Fatalf("accepted apply lost its own bytes: plan=%+v failed=%v raced=%v proof=%q", plan, failed, raced, applied.acceptedBlobSHA)
+	}
 }
 
 func TestRepositoryReadRepairAcceptedContentCannotChangeOwners(t *testing.T) {
