@@ -290,7 +290,11 @@ indexes, source-evidence registration, physical status/listings, commit notes,
 publication records or disk/graph outcome setters. It supplies no invented
 disk or freshness verdict. The private lookup checks the scalar reference and
 fixed-size transaction identity before borrowing an owned timing snapshot.
-Complete batch parser/durability lap coverage remains pending.
+Batch text splices have no parser lap. Forward file writes/removals and the
+deduplicated target-directory sync now have concrete timing boundaries, as
+described below. Journal, backup, rollback, cleanup and planning work remain
+unclassified; complete critical-path coverage and the measured 5% sum gate
+remain pending.
 
 ## Receipt acknowledgement wire and critical-path denominator
 
