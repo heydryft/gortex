@@ -38,7 +38,7 @@ func init() {
 // It carries exit code 75, so a script or hook that runs the CLI can retry
 // later without parsing the message.
 type repoLoadingError struct {
-	identityPending bool
+	admissionReason string
 	repo            string
 	phase           string
 	percent         int
@@ -51,8 +51,8 @@ func (e *repoLoadingError) Error() string {
 	if e.waited > 0 {
 		msg += fmt.Sprintf("; still loading after waiting %s", e.waited.Round(time.Second))
 	}
-	if e.identityPending {
-		msg = "the gortex daemon is still resolving configured repository identities (repo_loading, identity_pending)"
+	if e.admissionReason != "" {
+		msg = fmt.Sprintf("the gortex daemon is still resolving graph admission (repo_loading, %s)", e.admissionReason)
 		if e.waited > 0 {
 			msg += fmt.Sprintf("; still loading after waiting %s", e.waited.Round(time.Second))
 		}

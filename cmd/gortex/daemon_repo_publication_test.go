@@ -115,3 +115,13 @@ func TestDispatcher_ReadyFamilyIdentityDoesNotGrantUnprovenCheckoutScope(t *test
 	require.NotContains(t, data, "repo_path")
 	require.NotContains(t, reply, "result", "family identity alone grants no graph scope")
 }
+
+func TestExtractToolResult_ScopeBindingPendingDoesNotClaimTracking(t *testing.T) {
+	_, err := extractToolResult([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"scope binding pending","data":{"error_code":"repo_loading","retryable":true,"reason":"scope_binding_pending","phase":"scope_binding","percent":0}}}`))
+	var loading *repoLoadingError
+	require.ErrorAs(t, err, &loading)
+	require.Equal(t, exitTempFail, loading.ExitCode())
+	require.Contains(t, err.Error(), "scope_binding_pending")
+	require.NotContains(t, err.Error(), "already tracked")
+	require.NotContains(t, err.Error(), "gortex track")
+}
