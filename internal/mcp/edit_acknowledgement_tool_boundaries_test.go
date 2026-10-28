@@ -99,6 +99,37 @@ func TestAcknowledgementBatchAdmissionKeepsOriginalSchedulerContext(t *testing.T
 	require.NotNil(t, a.snapshot().TicketAdmission.ObservedMS)
 }
 
+func TestAcknowledgementBatchMoveDeleteCountsForwardCallsOnly(t *testing.T) {
+	s := newAtomicBatchTestServer(t, mutationTestWatcher{})
+	s.ToolCallTimeout = -1
+	dir := t.TempDir()
+	source := writeAtomicBatchFixture(t, dir, "source.txt", "move me\n")
+	deleted := writeAtomicBatchFixture(t, dir, "delete.txt", "delete me\n")
+	destination := filepath.Join(dir, "destination.txt")
+	var a *editAcknowledgement
+	h := s.boundToolHandler(func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		a = editAcknowledgementFrom(ctx, s)
+		receipt, err := s.runBatchTransaction(ctx, []batchEditItem{
+			atomicFileMove(source, destination, testSHA256("move me\n")),
+			atomicFileDelete(deleted, testSHA256("delete me\n")),
+		}, "ack-move-delete")
+		if err != nil {
+			return nil, err
+		}
+		return mcp.NewToolResultJSON(receipt)
+	})
+	result, err := h(t.Context(), editOperationRequest("batch_edit", ""))
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	require.NoFileExists(t, source)
+	require.NoFileExists(t, deleted)
+	require.Equal(t, "move me\n", readAtomicBatchFixture(t, destination))
+	snapshot := a.snapshot()
+	require.EqualValues(t, 4, snapshot.DiskWrite.Completed, "one forward write, two forward removals and one deduplicated directory-sync envelope")
+	require.EqualValues(t, 3, snapshot.TicketAdmission.Completed)
+	require.True(t, snapshot.LapsDisjoint)
+}
+
 func TestAcknowledgementMoveRealParserAndSourceDurability(t *testing.T) {
 	s, root := setupMoveInlineRepo(t, map[string]string{
 		"pkg/a.go": "package pkg\n\nfunc Foo() int { return 42 }\n",
