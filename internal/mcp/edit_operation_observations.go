@@ -150,12 +150,19 @@ func (s *Server) observeEditOperationHandler(h mcpserver.ToolHandlerFunc) mcpser
 		if s == nil || !measuredSourceEdit(req) {
 			return h(ctx, req)
 		}
-		if existing := editOperationFrom(ctx); existing != nil && existing.owner == &s.editOperations {
-			return h(ctx, req) // a raw/facade nested handler borrows the owner
-		}
-		w := &editOperationWitness{owner: &s.editOperations}
-		ctx = context.WithValue(ctx, editOperationContextKey{}, w)
-		defer func() { w.finish(result, err) }()
-		return h(ctx, req)
+		return s.runMeasuredEditOperation(ctx, req, h)
 	}
+}
+
+// runMeasuredEditOperation is called only after measuredSourceEdit succeeded.
+// The bound-call observer shares that classification; completion still runs
+// inside the actual handler, including after an abandoned caller has returned.
+func (s *Server) runMeasuredEditOperation(ctx context.Context, req mcp.CallToolRequest, h mcpserver.ToolHandlerFunc) (result *mcp.CallToolResult, err error) {
+	if existing := editOperationFrom(ctx); existing != nil && existing.owner == &s.editOperations {
+		return h(ctx, req) // a raw/facade nested handler borrows the owner
+	}
+	w := &editOperationWitness{owner: &s.editOperations}
+	ctx = context.WithValue(ctx, editOperationContextKey{}, w)
+	defer func() { w.finish(result, err) }()
+	return h(ctx, req)
 }

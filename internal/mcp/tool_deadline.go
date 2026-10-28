@@ -514,12 +514,26 @@ func abandonedToolMessage(name string, timeout time.Duration, verdict mutationCo
 }
 
 func (s *Server) boundToolHandler(h mcpserver.ToolHandlerFunc) mcpserver.ToolHandlerFunc {
-	// This wrapper runs INSIDE boundHandler's actual execution, so answering
-	// an abandoned caller cannot count an unfinished source operation.
-	h = s.observeEditOperationHandler(h)
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return func(ctx context.Context, req mcp.CallToolRequest) (result *mcp.CallToolResult, err error) {
+		actual := h
+		if s != nil && measuredSourceEdit(req) {
+			// Classify once. Reads add no observer/context allocation or clock.
+			var ack *editAcknowledgement
+			var owner bool
+			ctx, ack, owner = s.withEditAcknowledgement(ctx)
+			actual = func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				if owner {
+					defer ack.finishActual()
+				}
+				// Actual completion and its counters stay INSIDE the firewall.
+				return s.runMeasuredEditOperation(ctx, req, h)
+			}
+			if owner {
+				defer func() { ack.finishReply(result, err) }()
+			}
+		}
 		name := req.Params.Name
-		return boundHandler(s, "tool", name, (func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error))(h),
+		return boundHandler(s, "tool", name, (func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error))(actual),
 			func(stuck int64, timeout time.Duration) (*mcp.CallToolResult, error) {
 				return mcp.NewToolResultError(busyMessage("tool calls", stuck, timeout)), nil
 			},

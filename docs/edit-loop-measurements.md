@@ -210,6 +210,32 @@ status collection call or I/O; the new MCP block does not call the daemon's
 file-size/WAL-index collection path. Other daemon storage/status fields keep
 their existing semantics.
 
+## Private acknowledgement ownership (transport pending)
+
+Measured source-tool calls now own one private, call-scoped acknowledgement
+record at the `boundToolHandler` boundary. It reuses the existing five-tool
+classification. Nested calls on the same Server borrow its identity, while a
+different Server owns a different record. Reads allocate no acknowledgement
+record or context value and take no acknowledgement clock sample.
+
+The origin is `mcp_bound_call`, before the deadline firewall; it is neither
+dispatcher entry nor the legacy `toolReceivedAt` middleware origin. The latter
+and `publication_phases` remain unchanged. Caller response-ready freezes when
+the outer bound call returns. Actual handler completion is observed separately,
+including a detached physical commit that finishes later. Those walls overlap
+and must never be added together or presented as client receipt/socket delivery.
+Missing endpoints stay pending, missing origins stay unavailable and invalid
+ordering stays invalid; none becomes measured zero. Snapshots own their scalar
+values and never evaluate a live clock during formatting.
+
+This first ownership slice does not publish acknowledgement wire fields or
+retain a history. It does not attach pointers to `batchTransactions`, whose
+existing map has no bounded eviction. Dispatcher queue/preamble are explicitly
+unavailable pending the shared admission interface; actual parse/disk/enqueue
+laps, bounded receipt attachment and additive-sum validation are subsequent
+work. It does not change the validated actual-completion counters or CPU/WAL
+sampling. Read/native-path and mutation overhead still require measurement.
+
 ## Logical source-operation witness (transport pending)
 
 The MCP Server privately counts actual completion of the five measured source
