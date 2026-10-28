@@ -13,6 +13,7 @@ import (
 	"slices"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/zzet/gortex/internal/graph"
 	"github.com/zzet/gortex/internal/graph/store_sqlite"
@@ -83,6 +84,7 @@ type repositoryMutationOutcome struct {
 type repositoryMutationWaiter struct {
 	generation uint64
 	done       chan repositoryMutationOutcome
+	readRepair *repositoryReadRepairRequest
 }
 
 // repositoryMutationCoordinator is the stable single mutation lane for one repository.
@@ -127,6 +129,7 @@ type repositoryMutationCoordinator struct {
 	completedGeneration uint64
 	pending             repositoryMutationScope
 	waiters             []*repositoryMutationWaiter
+	readRepairPending   bool
 }
 
 func newRepositoryMutationCoordinator(executor repositoryMutationExecutor) *repositoryMutationCoordinator {
@@ -139,6 +142,14 @@ func (c *repositoryMutationCoordinator) reconcile(
 	ctx context.Context,
 	paths []string,
 ) (*IndexResult, error) {
+	return c.reconcileObserved(ctx, paths, nil)
+}
+
+func (c *repositoryMutationCoordinator) reconcileObserved(
+	ctx context.Context,
+	paths []string,
+	readRepair *repositoryReadRepairRequest,
+) (*IndexResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -146,6 +157,10 @@ func (c *repositoryMutationCoordinator) reconcile(
 		return nil, err
 	}
 	waiter := &repositoryMutationWaiter{done: make(chan repositoryMutationOutcome, 1)}
+	if readRepair != nil && readRepair.complete != nil {
+		request := *readRepair
+		waiter.readRepair = &request
+	}
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -158,6 +173,7 @@ func (c *repositoryMutationCoordinator) reconcile(
 	c.requestedGeneration++
 	waiter.generation = c.requestedGeneration
 	c.waiters = append(c.waiters, waiter)
+	c.readRepairPending = c.readRepairPending || waiter.readRepair != nil
 	if !c.running {
 		c.running = true
 		c.work.Add(1)
@@ -204,13 +220,29 @@ func (c *repositoryMutationCoordinator) drain() {
 		paths := c.pending.take()
 		waiters := c.waiters
 		c.waiters = nil
+		readRepairPending := c.readRepairPending
+		c.readRepairPending = false
 		executor := c.executor
 		outputGeneration := c.outputGeneration
 		authorityRequired := c.authorityRequired
 		c.mu.Unlock()
 
+		var observation *repositoryReadRepairObservation
+		if readRepairPending {
+			observation = newRepositoryReadRepairObservation(generation, paths, waiters)
+		}
+		if observation != nil {
+			observation.started = time.Now()
+		}
 		outcome := executeRepositoryMutationUnderAuthority(
 			outputGeneration, authorityRequired, executor, paths)
+		if observation != nil {
+			observation.finished = time.Now()
+			result := outcome.result
+			observation.executionSucceeded = outcome.err == nil && result != nil &&
+				!result.FullRetrack && len(result.FailedFiles) == 0 && len(result.Errors) == 0 &&
+				result.DeletedFileCount == 0 && result.QuarantinedFiles == 0 && result.SkippedFiles == 0
+		}
 		c.lane <- struct{}{}
 		if batchMutationGate != nil {
 			batchMutationGate.RUnlock()
@@ -221,6 +253,7 @@ func (c *repositoryMutationCoordinator) drain() {
 			c.completedGeneration = generation
 		}
 		c.mu.Unlock()
+		completeRepositoryReadRepair(observation, waiters)
 		for _, waiter := range waiters {
 			waiter.done <- outcome
 		}
