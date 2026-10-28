@@ -830,6 +830,9 @@ func (l *CheckoutLifecycle) RecordImplicit(ctx context.Context, root string) err
 	if l == nil || l.mi == nil {
 		return nil
 	}
+	if root == "" {
+		return fmt.Errorf("%w: empty implicit repository root", ErrCheckoutNotTracked)
+	}
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return fmt.Errorf("resolve implicit root %s: %w", root, err)

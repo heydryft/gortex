@@ -57,6 +57,8 @@ func TestRegisterCollisionNoCatalogNoWatcherNoSave(t *testing.T) {
 func TestRecordImplicitRequiresExactRegisteredRoot(t *testing.T) {
 	f := newLifecycleFixture(t)
 	t.Cleanup(f.close)
+	require.ErrorIs(t, f.lc.RecordImplicit(t.Context(), ""), ErrCheckoutNotTracked,
+		"an empty implicit root must not silently resolve to the process cwd")
 	owner := f.gitRepo("owner")
 	_, err := f.lc.Register(t.Context(), config.RepoEntry{Path: owner}, TrackSourceCLI)
 	require.NoError(t, err)
