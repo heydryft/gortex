@@ -3,6 +3,7 @@ package indexer
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -129,4 +130,64 @@ func TestRepoIdentitySeparateGitDirAndLinkedBoundary(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(nested, ".git"), 0755))
 	_, known = mi.PendingRepoForPath(nested)
 	require.False(t, known, "the nearest unrelated git identity is a boundary")
+}
+
+func TestRepoIdentityRegistrationPublishesCanonicalBinding(t *testing.T) {
+	physical := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "different-name")
+	require.NoError(t, os.Symlink(physical, alias))
+	mi := newRepoLoadTestMulti(t)
+	mi.DeclareRepos([]config.RepoEntry{{Path: alias}})
+	before := mi.RepoLoads()[0]
+	resolved, err := resolveRepoLoadIdentity(before)
+	require.NoError(t, err)
+	mi.markRepoRegistered("registered", alias)
+	mi.publishRepoLoadIdentity(before, resolved)
+	require.False(t, mi.RepoIdentityPending())
+	rec, found := mi.RepoLoadFor(physical)
+	require.True(t, found, "registration must publish its own proven canonical key even when the warmup publisher loses the race")
+	require.Equal(t, RepoLoadReady, rec.State)
+	require.Equal(t, "registered", rec.Prefix)
+}
+
+func TestRepoIdentityRejectsInvalidSeparateGitDir(t *testing.T) {
+	for _, kind := range []string{"missing", "file"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			target := filepath.Join(t.TempDir(), "not-a-git-directory")
+			if kind == "file" {
+				require.NoError(t, os.WriteFile(target, []byte("not a directory"), 0644))
+			}
+			require.NoError(t, os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: "+target), 0644))
+			info := ResolveWorktree(root)
+			require.Empty(t, info.GitCommonDir)
+			require.False(t, info.IsWorktree)
+			require.Equal(t, root, info.MainRepoPath)
+			mi := newRepoLoadTestMulti(t)
+			mi.ExpectRepos([]config.RepoEntry{{Path: root}})
+			require.True(t, mi.RepoIdentityPending())
+			require.Empty(t, enclosingWorktreeCommonDir(root))
+		})
+	}
+}
+
+func TestRepoIdentityPermissionAndDeviceErrorsAreNotNegativeEvidence(t *testing.T) {
+	for _, cause := range []error{syscall.EACCES, syscall.EIO} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			mi := newRepoLoadTestMulti(t)
+			root := t.TempDir()
+			mi.DeclareRepos([]config.RepoEntry{{Path: root}})
+			before := mi.RepoLoads()[0]
+			failure := &os.PathError{Op: "lstat", Path: root, Err: cause}
+			after, err := resolveRepoLoadIdentityWith(before, func(path string) (string, error) {
+				require.Equal(t, root, path)
+				return root, failure // even an absolute fallback is not proof on error
+			})
+			require.ErrorIs(t, err, cause)
+			require.True(t, after.identityPending)
+			require.Equal(t, RepoLoadQueued, after.State)
+			require.Empty(t, after.canonicalKey)
+			require.True(t, mi.RepoIdentityPending())
+		})
+	}
 }

@@ -28,6 +28,9 @@ import (
 type RepoLoadState string
 
 const (
+	// RepoLoadIdentityPending is an unmatched request while configured root
+	// identities are unresolved. It names no repository and grants no scope.
+	RepoLoadIdentityPending RepoLoadState = "identity_pending"
 	// RepoLoadQueued is a configured repository warmup has not started yet.
 	RepoLoadQueued RepoLoadState = "queued"
 	// RepoLoadRunning is a configured repository warmup is indexing or
@@ -44,7 +47,7 @@ const (
 
 // Loading reports a state that has not reached a terminal answer yet.
 func (s RepoLoadState) Loading() bool {
-	return s == RepoLoadQueued || s == RepoLoadRunning
+	return s == RepoLoadQueued || s == RepoLoadRunning || s == RepoLoadIdentityPending
 }
 
 // Ready reports a registered repository.
@@ -166,18 +169,17 @@ func (t *repoLoadTable) update(mutate func(records []RepoLoad) ([]RepoLoad, bool
 // canonical spelling and git common directory. Called only off the hot path:
 // when a start announces its repositories and when one registers.
 func newRepoLoad(root, prefix string, state RepoLoadState, now time.Time) RepoLoad {
-	rec := RepoLoad{Root: root, Prefix: prefix, State: state, Since: now, key: pathkey.IdentityKey(root)}
-	if canonical := pathkey.CanonicalExistingRoot(root); canonical != "" {
-		if key := pathkey.IdentityKey(canonical); key != rec.key {
-			rec.canonicalKey = key
-		}
+	rec := RepoLoad{Root: root, Prefix: prefix, State: state, Since: now,
+		key: pathkey.IdentityKey(root), identityPending: true, identityToken: new(byte)}
+	resolved, err := resolveRepoLoadIdentity(rec)
+	if err != nil {
+		rec.Reason = "identity resolution pending: " + err.Error()
+		return rec
 	}
-	if state.Loading() {
-		if commonDir := ResolveWorktree(root).GitCommonDir; commonDir != "" {
-			rec.commonDir = pathkey.CanonicalExistingRoot(commonDir)
-		}
-	}
-	return rec
+	// Registration is authoritative about ready state even if its directory
+	// disappeared since indexing. Identity absence is a separate observation.
+	resolved.State = state
+	return resolved
 }
 
 // absRepoRoot spells a configured path the way registration does.
@@ -258,14 +260,35 @@ func (mi *MultiIndexer) expectRepos(entries []config.RepoEntry, inspect bool) {
 		}
 		resolved, err := resolveRepoLoadIdentity(rec)
 		if err != nil {
+			// Retain the owner's diagnostic without turning uncertainty into a
+			// terminal absent-alias result. No request performs this operation again.
+			mi.repoLoads.update(func(records []RepoLoad) ([]RepoLoad, bool) {
+				i, ok := newRepoLoadSnapshot(records).find(rec.Root)
+				if !ok || !records[i].identityPending || records[i].identityToken != rec.identityToken {
+					return records, false
+				}
+				reason := "identity resolution pending: " + err.Error()
+				if records[i].Reason == reason {
+					return records, false
+				}
+				records[i].Reason = reason
+				return records, true
+			})
 			continue
-		} // EACCES/EIO is uncertainty, not an absent alias.
+		}
 		mi.publishRepoLoadIdentity(rec, resolved)
 	}
 }
 
 func resolveRepoLoadIdentity(rec RepoLoad) (RepoLoad, error) {
-	canonical, err := filepath.EvalSymlinks(rec.Root)
+	return resolveRepoLoadIdentityWith(rec, filepath.EvalSymlinks)
+}
+
+// The resolver argument lets source-level I/O failures be exercised without
+// depending on host privileges or an unavailable device. Production uses only
+// the existing warmup owner's synchronous filesystem resolver.
+func resolveRepoLoadIdentityWith(rec RepoLoad, canonicalize func(string) (string, error)) (RepoLoad, error) {
+	canonical, err := canonicalize(rec.Root)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return rec, err
@@ -306,6 +329,9 @@ func (mi *MultiIndexer) publishRepoLoadIdentity(before, resolved RepoLoad) {
 		}
 		rec := &records[i]
 		rec.canonicalKey, rec.commonDir, rec.identityPending = resolved.canonicalKey, resolved.commonDir, false
+		if rec.State.Loading() {
+			rec.Reason = ""
+		}
 		if rec.State == RepoLoadQueued && resolved.State == RepoLoadMissing {
 			rec.State, rec.Reason, rec.Since = resolved.State, resolved.Reason, time.Now()
 		}
@@ -447,8 +473,14 @@ func (mi *MultiIndexer) markRepoRegistered(prefix, root string) {
 		listeners = slices.Clone(mi.repoLoads.listeners)
 		if i, ok := newRepoLoadSnapshot(records).find(root); ok {
 			records[i].State, records[i].Reason, records[i].Since = RepoLoadReady, "", now
+			if registered.canonicalKey != "" {
+				records[i].canonicalKey = registered.canonicalKey
+			}
 			records[i].commonDir = ""
-			records[i].identityPending = false
+			records[i].identityPending = registered.identityPending
+			if registered.identityPending {
+				records[i].Reason = registered.Reason
+			}
 			if prefix != "" {
 				records[i].Prefix = prefix
 			}
@@ -608,8 +640,15 @@ func (s *repoLoadSnapshot) contained(path string) (RepoLoad, bool) {
 // path decides: a main checkout or a submodule is not a linked worktree.
 func enclosingWorktreeCommonDir(path string) string {
 	for dir := filepath.Clean(path); ; {
-		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
-			info := ResolveWorktree(dir)
+		_, err := os.Lstat(filepath.Join(dir, ".git"))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return ""
+		}
+		if err == nil {
+			info, resolveErr := resolveWorktreeChecked(dir)
+			if resolveErr != nil {
+				return ""
+			}
 			if info.GitCommonDir == "" {
 				return ""
 			}

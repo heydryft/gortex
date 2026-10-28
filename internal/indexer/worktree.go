@@ -86,6 +86,14 @@ func resolveWorktreeChecked(path string) (WorktreeInfo, error) {
 		wtGitDir = filepath.Join(abs, wtGitDir)
 	}
 
+	gitInfo, err := os.Stat(wtGitDir)
+	if err != nil {
+		return info, err
+	}
+	if !gitInfo.IsDir() {
+		return info, fmt.Errorf("gitdir %s is not a directory", wtGitDir)
+	}
+
 	// Only a worktree's gitdir carries a `commondir` file; a
 	// submodule's does not. Its absence means "not a worktree".
 	commonRaw, err := os.ReadFile(filepath.Join(wtGitDir, "commondir"))
