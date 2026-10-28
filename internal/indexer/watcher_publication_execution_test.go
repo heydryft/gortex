@@ -45,6 +45,7 @@ func requirePointExecution(t *testing.T, record *PublicationPhaseRecord, want bo
 		}
 	}
 	if want {
+		require.NotNil(t, record.Snapshot().laneWait, "only this winning attempt owns its actual lane pair")
 		require.NotNil(t, record.Snapshot().patchLaps, "real standalone/MultiWatcher paths must carry the same local scalar collector")
 		require.LessOrEqual(t, offsets[PublicationPatchExecutionStarted], offsets[PublicationPatchDerivedStarted])
 		require.LessOrEqual(t, offsets[PublicationPatchDerivedStarted], offsets[PublicationPatchDerivedFinished])
@@ -53,6 +54,7 @@ func requirePointExecution(t *testing.T, record *PublicationPhaseRecord, want bo
 		require.Equal(t, "measured", timing.States["derived"])
 		require.NotNil(t, timing.Milliseconds["derived"])
 	} else {
+		require.Nil(t, record.Snapshot().laneWait, "rejected/shared attempts must not borrow the winner's lane wait")
 		require.Nil(t, record.Snapshot().patchLaps, "rejected attempts must not transfer any scalar evidence")
 	}
 }
@@ -181,6 +183,7 @@ func TestCanonicalPublicationDiscardsRetryAttemptSpans(t *testing.T) {
 	requirePointExecution(t, record, true)
 	require.EqualValues(t, 2, calls.Load())
 	require.GreaterOrEqual(t, phaseOffsets(record.Snapshot())[PublicationPatchExecutionStarted], firstFailed.Sub(origin).Nanoseconds())
+	require.GreaterOrEqual(t, record.Snapshot().laneWait.startNS, firstFailed.Sub(origin).Nanoseconds(), "retry must retain only the winning attempt's wait")
 }
 
 func TestCanonicalPublicationDiscardsStoppedInFlightAttempt(t *testing.T) {

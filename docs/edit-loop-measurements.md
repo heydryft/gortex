@@ -68,8 +68,15 @@ accepted runnable attempt, which may follow retries. These are outer execution
 events, not a pure debounce/lane/gate measurement, a full patch wall, or a split
 of nested deep phases. No deep checkout-builder phase is relabelled onto the
 contextless canonical pipeline, and internal storm/atomic batches remain outside
-this observation. Debounce, repository-lane wait and the full patch wall remain unobserved;
+this observation. Debounce and the full patch wall remain unobserved;
 no phase-sum or CPU attribution acceptance follows from these events.
+
+For an accepted canonical point attempt, `lane_wait` uses the actual repository
+lane channel wait and grant, after batch admission and its hook. The pair is
+separate from executor-contained laps and is published only for that exact
+winner, with enqueue/cycle/executor containment validated. Canceled waits have
+no grant; rejected or coalesced attempts do not borrow another attempt's pair.
+This does not measure the cohort semaphore, batch lock, or full patch lifetime.
 
 The same optional attempt-local collector now follows the actual standalone or
 MultiWatcher point executor to its precise derived-tail call. The raw pair

@@ -29,6 +29,9 @@ func TestCanonicalPatchLogOwnsItsSnapshotBeforeWinnerPublication(t *testing.T) {
 	require.Equal(t, "physical_attempt_before_receipt_validation", fields["patch_lap_scope"])
 	require.Equal(t, ticket.Generation, fields["attempt_ticket"])
 	status := record.Snapshot().EditTimings()
+	require.Equal(t, status.States["lane_wait"], fields["attempt_lane_wait_state"])
+	require.NotNil(t, status.Milliseconds["lane_wait"])
+	require.Equal(t, *status.Milliseconds["lane_wait"], fields["attempt_lane_wait_ms"])
 	for _, name := range canonicalPatchLapNames {
 		require.Equal(t, status.States[name], fields["attempt_"+name+"_state"], name)
 		if ms := status.Milliseconds[name]; ms != nil {

@@ -376,10 +376,12 @@ func (c *repositoryMutationCoordinator) runExclusiveMode(
 		return err
 	}
 
+	laneTiming := beginCanonicalLaneWait(ctx)
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-c.lane:
+		laneTiming.canonicalLaneAcquired()
 	}
 	defer func() { c.lane <- struct{}{} }()
 	if err := ctx.Err(); err != nil {

@@ -177,7 +177,8 @@ type PublicationPhaseRecord struct {
 	marks          []publicationMark
 	terminal       bool
 	canonicalBound bool
-	patchLaps      *canonicalPatchEvidence // immutable, exact accepted attempt only
+	patchLaps      *canonicalPatchEvidence    // immutable, exact accepted attempt only
+	laneWait       *canonicalLaneWaitEvidence // separate from executor-contained laps
 }
 
 type publicationMark struct {
@@ -455,6 +456,7 @@ type PublicationPhaseSnapshot struct {
 	Terminal          bool                     `json:"terminal"`
 	Phases            []PublicationPhaseOffset `json:"phases"`
 	patchLaps         *canonicalPatchEvidence  // private; legacy timeline wire stays unchanged
+	laneWait          *canonicalLaneWaitEvidence
 }
 
 // Snapshot renders the record.
@@ -472,6 +474,7 @@ func (p *PublicationPhaseRecord) Snapshot() PublicationPhaseSnapshot {
 		Terminal:          p.terminal,
 		Phases:            make([]PublicationPhaseOffset, 0, len(p.marks)),
 		patchLaps:         p.patchLaps,
+		laneWait:          p.laneWait,
 	}
 	for _, mark := range p.marks {
 		offset := mark.at.Sub(p.origin)
@@ -523,6 +526,7 @@ type PublicationStamps struct {
 	mu        sync.Mutex
 	marks     []publicationMark
 	patchLaps *canonicalPatchLaps
+	laneWait  canonicalLaneWait
 }
 
 type publicationStampsKey struct{}
@@ -584,9 +588,14 @@ func (p *PublicationPhaseRecord) Absorb(stamps *PublicationStamps) {
 	stamps.mu.Lock()
 	marks := append([]publicationMark(nil), stamps.marks...)
 	var patch *canonicalPatchEvidence
+	var lane *canonicalLaneWaitEvidence
 	if stamps.patchLaps != nil {
 		frozen := stamps.patchLaps.freeze(p.origin)
 		patch = &frozen
+	}
+	if !stamps.laneWait.started.IsZero() || stamps.laneWait.invalid {
+		frozen := stamps.laneWait.freeze(p.origin)
+		lane = &frozen
 	}
 	stamps.mu.Unlock()
 	p.mu.Lock()
@@ -598,5 +607,6 @@ func (p *PublicationPhaseRecord) Absorb(stamps *PublicationStamps) {
 	}
 	if !p.terminal && p.canonicalBound && p.patchLaps == nil {
 		p.patchLaps = patch
+		p.laneWait = lane
 	}
 }
