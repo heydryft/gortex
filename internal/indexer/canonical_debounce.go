@@ -30,6 +30,11 @@ func (p canonicalDebounceEvidence) project(offsets map[PublicationPhase]int64, t
 		return
 	}
 	enqueue, hasEnqueue := offsets[PublicationTicketEnqueued]
+	if !hasEnqueue {
+		// A native serving record has no request-admission timestamp. Its
+		// independently observed arm start is the applicable lower boundary.
+		enqueue, hasEnqueue = offsets[PublicationTimerArmStarted]
+	}
 	cycle, hasCycle := offsets[PublicationCycleStarted]
 	if !hasEnqueue || !hasCycle {
 		return

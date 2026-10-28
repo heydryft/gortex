@@ -107,8 +107,11 @@ expose `coalesced_publication`: a separate bounded recorder entry for that actua
 physical winner, with explicit requested and applied generations. The original
 receipt's accepted-P fields remain unavailable. Each actually served retained
 predecessor may refer to the same winner; these are references to shared work,
-not additive per-edit spans. The winner uses its own callback-entry origin and
-actual return endpoint. Native quiet wait is not observed, and
+not additive per-edit spans. When the actual native arm reading is available,
+the independent winner's origin is that observed arm start and `debounce` uses
+that winner's arm-to-callback pair. Otherwise its origin remains callback entry
+and quiet wait remains unavailable. Original receipt timestamps never move. P
+still measures callback entry through actual return, excluding debounce, and
 `background_coverage` remains `not_established`. Eviction, absent ownership,
 failure or supersession leaves this independent evidence unavailable; weak links
 cannot retain evicted entries or rebind a previously served receipt.
@@ -127,6 +130,9 @@ successor quiet wait, and the already validated physical P partition. These use
 actual ordered endpoints, not wall time minus known laps. The B wall is measured
 independently from its own start/end. Original accepted-P fields remain null.
 Earlier snapshots remain unchanged; only a fresh late observation can contain B.
+The winner's whole `debounce` pair is not added again beside B's measured
+successor arm/quiet split. Status renders related P and B from one fenced
+immutable observation, so complete B cannot accompany an older missing P.
 
 Prior callback entry, Stop=false, repeated resets, retries, multiple observed
 predecessors, missing/reversed boundaries, incomplete P or lost membership leave

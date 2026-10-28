@@ -29,8 +29,8 @@ func (p *PublicationPhaseRecord) beginCoalescedAttempt(generation uint64, retry 
 		return nil // a callback identity cannot be rebound to another origin
 	}
 	record := owner.beginLocked(checkout, key, "canonical_coalesced_attempt", entered)
-	// This origin is callback entry, not native admission. Bind identity only;
-	// fabricating ticket_enqueued here would invent a quiet/admission boundary.
+	// This origin is the observed native arm (or callback entry when absent),
+	// not request admission. Bind identity without inventing ticket_enqueued.
 	record.mu.Lock()
 	record.canonicalBound, record.ticket = true, generation
 	record.mu.Unlock()
@@ -70,12 +70,13 @@ func (p *PublicationPhaseRecord) linkCoalescedWinner(winner *PublicationPhaseRec
 // window or a complete per-edit background window. An evicted/rebound owner or
 // winner remains unavailable. The weak link cannot retain bounded history.
 type CoalescedPublication struct {
-	RequestedGeneration uint64                   `json:"requested_generation"`
-	AppliedGeneration   uint64                   `json:"applied_generation"`
-	Scope               string                   `json:"scope"`
-	BackgroundCoverage  string                   `json:"background_coverage"`
-	Publication         PublicationPhaseSnapshot `json:"publication_phases"`
-	Timings             EditPhaseTimings         `json:"timings"`
+	RequestedGeneration uint64                     `json:"requested_generation"`
+	AppliedGeneration   uint64                     `json:"applied_generation"`
+	Scope               string                     `json:"scope"`
+	BackgroundCoverage  string                     `json:"background_coverage"`
+	Publication         PublicationPhaseSnapshot   `json:"publication_phases"`
+	Timings             EditPhaseTimings           `json:"timings"`
+	Background          *RequestedBackgroundTiming `json:"-"` // same fenced immutable observation, projected once
 }
 
 func (p *PublicationPhaseRecord) CoalescedPublication() *CoalescedPublication {
@@ -89,7 +90,7 @@ func (p *PublicationPhaseRecord) CoalescedPublication() *CoalescedPublication {
 	owner.mu.Lock()
 	defer owner.mu.Unlock()
 	p.mu.Lock()
-	winner, requested, key := p.coalescedWinner.Value(), p.ticket, p.key
+	winner, requested, key, background := p.coalescedWinner.Value(), p.ticket, p.key, p.background
 	p.mu.Unlock()
 	if owner.byKey[key] != p || winner == nil {
 		return nil
@@ -98,7 +99,11 @@ func (p *PublicationPhaseRecord) CoalescedPublication() *CoalescedPublication {
 	if owner.byKey[snapshot.Key] != winner || snapshot.Ticket <= requested {
 		return nil
 	}
-	return &CoalescedPublication{RequestedGeneration: requested, AppliedGeneration: snapshot.Ticket,
+	out := &CoalescedPublication{RequestedGeneration: requested, AppliedGeneration: snapshot.Ticket,
 		Scope: "independent_physical_winner_serving_coalesced_receipt", BackgroundCoverage: "not_established",
 		Publication: snapshot, Timings: snapshot.EditTimings()}
+	if background != nil && background.requested == requested && background.applied == snapshot.Ticket && snapshot.attemptWindow != nil && *snapshot.attemptWindow == background.physical {
+		out.Background = background.project(out.Timings.Window.PatchAccounting)
+	}
+	return out
 }

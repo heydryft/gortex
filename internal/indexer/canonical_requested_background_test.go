@@ -66,6 +66,12 @@ func TestRequestedBackgroundMeasuresCanceledInitialTimerAndActualP(t *testing.T)
 	require.GreaterOrEqual(t, background.PhasesMS["scheduling_admission_setup"], 0.0)
 	require.Greater(t, background.PhasesMS["successor_quiet_wait"], 0.0)
 	require.Zero(t, background.UnattributedMS)
+	winner := record.CoalescedPublication()
+	require.NotNil(t, winner.Background, "B and P come from one related immutable observation")
+	require.NotNil(t, winner.Timings.Window.PatchWallMS)
+	require.NotNil(t, winner.Timings.Milliseconds["debounce"])
+	require.NotContains(t, background.PhasesMS, "debounce", "the whole pair is not added beside B's arm/quiet split")
+	require.InDelta(t, *winner.Timings.Milliseconds["debounce"], background.PhasesMS["successor_timer_arm"]+background.PhasesMS["successor_quiet_wait"], 0.000001)
 	requirePointExecution(t, record, false)
 	sum := 0.0
 	for _, value := range background.PhasesMS {
@@ -103,6 +109,10 @@ func TestRequestedBackgroundPreservesAcceptedWinnerDuringLaterAdmission(t *testi
 	require.NoError(t, awaitMutationRetryResult(t, first).Err)
 	require.NoError(t, awaitMutationRetryResult(t, native).Err)
 	require.Nil(t, record.RequestedBackground())
+	early := record.CoalescedPublication()
+	require.NotNil(t, early)
+	require.Nil(t, early.Background)
+	require.Nil(t, early.Timings.Window.PatchWallMS)
 	// Completion already accepted the serving identity and retired its waiter.
 	// Later work cannot erase this historical observation during final release.
 	w.scheduleFileMutation("later.go", ChangeModified)
@@ -113,6 +123,11 @@ func TestRequestedBackgroundPreservesAcceptedWinnerDuringLaterAdmission(t *testi
 	}, 5*time.Second, time.Millisecond)
 	require.Eventually(t, func() bool { return record.RequestedBackground() != nil }, 5*time.Second, time.Millisecond)
 	require.Equal(t, native.Generation, record.RequestedBackground().AppliedGeneration)
+	late := record.CoalescedPublication()
+	require.NotNil(t, late.Background)
+	require.NotNil(t, late.Timings.Window.PatchWallMS, "one response cannot pair complete B with older missing P")
+	require.Nil(t, early.Background)
+	require.Nil(t, early.Timings.Window.PatchWallMS, "earlier related snapshots remain immutable")
 }
 
 func TestRequestedBackgroundRefusesAdditionalResetAndObservedPredecessors(t *testing.T) {
@@ -153,9 +168,9 @@ func TestRequestedBackgroundRefusesAdditionalResetAndObservedPredecessors(t *tes
 func TestRequestedBackgroundRejectsIncompleteOrInvalidIntegerBounds(t *testing.T) {
 	_, origin, window := controlledAttemptWindow(t)
 	window.ticket = 2
-	valid := canonicalBackgroundEvidence{origin: origin, requested: 1, applied: 2, physical: window, points: [9]int64{0, 1, 2, 3, 4, 5, 6, 7, 30e6 + 7}}
+	valid := canonicalBackgroundEvidence{origin: origin, requested: 1, applied: 2, physical: window, debounce: canonicalDebounceEvidence{startedNS: 0, enteredNS: 1e6, entered: true}, points: [9]int64{0, 1, 2, 3, 4, 5, 6, 1e6 + 5, 31e6 + 5}}
 	require.True(t, valid.valid())
-	for _, name := range []string{"missing", "reversed", "overflow", "incomplete_P", "wrong_winner", "retry", "gap"} {
+	for _, name := range []string{"missing", "reversed", "overflow", "incomplete_P", "wrong_winner", "retry", "gap", "debounce_disagrees", "debounce_missing"} {
 		t.Run(name, func(t *testing.T) {
 			b := valid
 			switch name {
@@ -173,6 +188,10 @@ func TestRequestedBackgroundRejectsIncompleteOrInvalidIntegerBounds(t *testing.T
 				b.physical.retry = 1
 			case "gap":
 				b.points[8]++
+			case "debounce_disagrees":
+				b.debounce.enteredNS++
+			case "debounce_missing":
+				b.debounce.entered = false
 			}
 			require.False(t, b.valid())
 		})

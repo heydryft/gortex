@@ -2016,7 +2016,11 @@ func (w *Watcher) armPointMutationTimerLocked(path string, kind ChangeKind, gene
 		}
 		observation.background, observation.successor = background, waiter.publication == nil
 		if background != nil {
-			background.armStarted(observation.successor, time.Now())
+			armStarted := time.Now()
+			background.armStarted(observation.successor, armStarted)
+			if observation.successor && retryAttempt == 0 {
+				observation.debounce.started = armStarted // same actual native arm reading, never predecessor quiet
+			}
 		}
 		waiter.timerObservation = observation
 		w.mutationWaiters[path][generation] = waiter

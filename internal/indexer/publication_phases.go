@@ -100,6 +100,9 @@ const (
 	// route it published describes a sample taken after the ticket arrived.
 	// It is terminal.
 	PublicationTicketCompleted PublicationPhase = "ticket_completed"
+	// PublicationTimerArmStarted is an independently observed native serving
+	// timer's actual arm start; it is not request admission.
+	PublicationTimerArmStarted PublicationPhase = "timer_arm_started"
 	// PublicationTicketFailed is the ticket ending without a publication. It
 	// is terminal.
 	PublicationTicketFailed PublicationPhase = "ticket_failed"

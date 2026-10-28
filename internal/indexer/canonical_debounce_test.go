@@ -80,3 +80,29 @@ func TestCanonicalDebounceRequiresActualContainedPair(t *testing.T) {
 		})
 	}
 }
+
+func TestCanonicalNativeDebounceUsesOnlyActualArmProof(t *testing.T) {
+	for _, name := range []string{"actual_arm", "missing_arm", "arm_after_start", "terminal_before_callback"} {
+		t.Run(name, func(t *testing.T) {
+			pair := canonicalDebounceEvidence{startedNS: 0, enteredNS: 5, entered: true}
+			offsets := map[PublicationPhase]int64{PublicationTimerArmStarted: 0, PublicationCycleStarted: 6, PublicationTicketCompleted: 10}
+			switch name {
+			case "missing_arm":
+				delete(offsets, PublicationTimerArmStarted)
+			case "arm_after_start":
+				offsets[PublicationTimerArmStarted] = 1
+			case "terminal_before_callback":
+				offsets[PublicationTicketCompleted] = 4
+			}
+			out := EditPhaseTimings{Milliseconds: make(map[string]*float64), States: make(map[string]string)}
+			pair.project(offsets, true, &out)
+			if name == "actual_arm" {
+				require.Equal(t, "measured", out.States["debounce"])
+				require.Equal(t, 0.000005, *out.Milliseconds["debounce"])
+			} else {
+				require.Nil(t, out.Milliseconds["debounce"])
+			}
+			require.NotContains(t, offsets, PublicationTicketEnqueued, "native arm must not invent request admission")
+		})
+	}
+}

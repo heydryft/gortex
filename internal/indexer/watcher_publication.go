@@ -34,8 +34,15 @@ func (w *Watcher) beginPointPublicationObserved(path string, generation uint64, 
 	w.mu.Unlock()
 	independent := false
 	if record == nil && predecessor != nil {
-		record = predecessor.beginCoalescedAttempt(generation, retry, observation.entered)
+		origin := observation.entered
+		if retry == 0 && !observation.debounce.started.IsZero() && !observation.debounce.started.After(observation.entered) {
+			origin = observation.debounce.started
+		}
+		record = predecessor.beginCoalescedAttempt(generation, retry, origin)
 		independent = record != nil
+		if independent && origin.Equal(observation.debounce.started) {
+			record.MarkAt(PublicationTimerArmStarted, origin)
+		}
 	}
 	if record == nil {
 		return nil // no tracing allocations on native/uninstrumented paths

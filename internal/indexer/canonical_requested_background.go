@@ -74,6 +74,9 @@ func (b *canonicalBackgroundOwner) stopped(successor bool, start, end time.Time,
 		b.invalid = true
 	}
 	b.points[3], b.points[4] = start, end
+	if b.invalid {
+		return nil
+	}
 	return b
 }
 func (b *canonicalBackgroundOwner) callback(successor bool, at time.Time) {
@@ -90,6 +93,7 @@ type canonicalBackgroundEvidence struct {
 	points             [9]int64
 	requested, applied uint64
 	physical           canonicalAttemptWindow
+	debounce           canonicalDebounceEvidence
 }
 
 func (b *canonicalBackgroundOwner) finish(attempt *pointPublicationAttempt, entered, end time.Time, retry int) {
@@ -127,7 +131,7 @@ func (b *canonicalBackgroundOwner) finish(attempt *pointPublicationAttempt, ente
 	winner.mu.Lock()
 	defer winner.mu.Unlock()
 	if owner.byKey[record.key] != record || owner.byKey[winner.key] != winner || record.ticket != b.requested ||
-		record.coalescedWinner.Value() != winner || record.background != nil || winner.attemptWindow == nil || winner.ticket <= b.requested {
+		record.coalescedWinner.Value() != winner || record.background != nil || winner.attemptWindow == nil || winner.debounce == nil || winner.ticket <= b.requested {
 		return
 	}
 	for _, mark := range record.marks {
@@ -137,6 +141,7 @@ func (b *canonicalBackgroundOwner) finish(attempt *pointPublicationAttempt, ente
 	}
 	evidence.applied = winner.ticket
 	evidence.physical = *winner.attemptWindow
+	evidence.debounce = *winner.debounce
 	if !winner.origin.Add(time.Duration(evidence.physical.startNS)).Equal(entered) || !winner.origin.Add(time.Duration(evidence.physical.endNS)).Equal(end) || !evidence.valid() {
 		return
 	}
@@ -154,6 +159,9 @@ func (b canonicalBackgroundEvidence) valid() bool {
 	}
 	p := b.physical.evaluateAccounting()
 	if !p.complete || b.physical.retry != 0 || b.physical.ticket != b.applied || b.physical.endNS-b.physical.startNS != b.points[8]-b.points[7] {
+		return false
+	}
+	if !b.debounce.entered || b.debounce.startedNS < 0 || b.debounce.enteredNS != b.physical.startNS || b.debounce.enteredNS-b.debounce.startedNS != b.points[7]-b.points[5] {
 		return false
 	}
 	sum := int64(0)
@@ -188,40 +196,27 @@ type RequestedBackgroundTiming struct {
 	UnattributedMS      float64            `json:"unattributed_ms"`
 }
 
-func (p *PublicationPhaseRecord) RequestedBackground() *RequestedBackgroundTiming {
-	if p == nil {
-		return nil
-	}
-	owner := p.owner.Value()
-	if owner == nil {
-		return nil
-	}
-	owner.mu.Lock()
-	defer owner.mu.Unlock()
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if owner.byKey[p.key] != p || p.background == nil {
-		return nil
-	}
-	winner := p.coalescedWinner.Value()
-	if winner == nil {
-		return nil
-	}
-	winner.mu.Lock()
-	defer winner.mu.Unlock()
-	b := *p.background
-	if owner.byKey[winner.key] != winner || winner.ticket != b.applied || p.ticket != b.requested || !b.valid() {
+func (b canonicalBackgroundEvidence) project(physical *EditPatchAccounting) *RequestedBackgroundTiming {
+	// This immutable evidence was fully validated at publication. The related
+	// snapshot additionally proves it still names this exact physical value.
+	if physical == nil || !physical.PartitionComplete {
 		return nil
 	}
 	out := &RequestedBackgroundTiming{Scope: "accepted_scheduling_call_entry_to_serving_attempt_return", Coverage: "one_canceled_timer_one_native_successor", SumState: "partial", OriginWall: b.origin.UTC().Format(time.RFC3339Nano), RequestedGeneration: b.requested, AppliedGeneration: b.applied, WallMS: float64(b.points[8]) / 1e6, PhasesMS: make(map[string]float64, 7+canonicalPatchLapCount), PartitionComplete: true}
 	for i, name := range requestedBackgroundLapNames {
 		out.PhasesMS[name] = float64(b.points[i+1]-b.points[i]) / 1e6
 	}
-	projected := b.physical.evaluateAccounting()
-	for i, name := range canonicalAttemptLapNames {
-		if projected.states[i] == "measured" {
-			out.PhasesMS[name] = projected.values[i]
+	for name, value := range physical.PhasesMS {
+		if value != nil {
+			out.PhasesMS[name] = *value
 		}
 	}
 	return out
+}
+
+func (p *PublicationPhaseRecord) RequestedBackground() *RequestedBackgroundTiming {
+	if related := p.CoalescedPublication(); related != nil {
+		return related.Background
+	}
+	return nil
 }
