@@ -144,7 +144,14 @@ func (l *CheckoutLifecycle) prepareRegistrationNaming(ctx context.Context, entry
 	entry.Path = pathkey.NormalizeVolume(abs)
 	budget, cancel := context.WithDeadline(ctx, before)
 	defer cancel()
-	facts, err = l.mi.prefixStats.naming(budget, entry.Path)
+	if entry.Name != "" {
+		// A pinned prefix cannot depend on workspace or worktree naming.
+		// Keep cheap preflight independent of the size of git's worktree list;
+		// actual registration still records its lifecycle inventory normally.
+		facts, err = l.mi.prefixStats.canonical(budget, entry.Path)
+	} else {
+		facts, err = l.mi.prefixStats.naming(budget, entry.Path)
+	}
 	if err != nil {
 		return entry, facts, trackNamingFailure(ctx, err)
 	}
