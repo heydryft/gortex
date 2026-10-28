@@ -149,7 +149,7 @@ func TestMCPDispatchTimingNilPrimitiveDoesNotAllocate(t *testing.T) {
 		_, _ = MCPDispatchTimingForContext(ctx)
 	})
 	require.Zero(t, allocations)
-	_, ok := MCPDispatchTimingForContext(nil)
+	_, ok := MCPDispatchTimingForContext(nil) //nolint:staticcheck // Intentional nil-context abstention control.
 	require.False(t, ok)
 }
 
@@ -168,9 +168,9 @@ func BenchmarkMCPDispatchTimingLease(b *testing.B) {
 		for b.Loop() {
 			lease := mcpDispatchSlotLease{}
 			lease.mu.Lock()
-			lease.mu.Unlock()
+			lease.mu.Unlock() //nolint:staticcheck // Intentional empty lock baseline isolates existing lease mutex costs.
 			lease.mu.Lock()
-			lease.mu.Unlock()
+			lease.mu.Unlock() //nolint:staticcheck // Intentional empty lock baseline isolates existing lease mutex costs.
 		}
 	})
 	b.Run("observed-lease", func(b *testing.B) {

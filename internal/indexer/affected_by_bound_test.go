@@ -640,7 +640,7 @@ func enqueueAffectedByPointMutationWith(
 //
 // Revert-red: remove the derived-fan-out window from
 // patchGraphWithReceiptStateRawModern (or stop threading it into
-// completeMutationWaitersWithFanout, or drop the field from MutationResult)
+// completeMutationWaitersObserved, or drop the field from MutationResult)
 // and a knowingly incomplete mutation reports Observed=false — the shape in
 // which the fact reached the receipt and then reached no consumer at all.
 func TestAdmittedPointMutationReportsTheDerivedFanoutCut(t *testing.T) {

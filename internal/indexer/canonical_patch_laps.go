@@ -173,7 +173,8 @@ type canonicalPatchEvidence struct {
 // freeze converts only same-process monotonic readings, never wall strings.
 // Called under the collector lock; the returned value has no mutable aliases.
 func (p *canonicalPatchLaps) freeze(origin time.Time) canonicalPatchEvidence {
-	out := canonicalPatchEvidence{invalid: p.invalid || p.active != 0 && !(p.controlObserved && p.active == 1 && isAttemptControl(p.activeKind))}
+	openOuterControl := p.controlObserved && p.active == 1 && isAttemptControl(p.activeKind)
+	out := canonicalPatchEvidence{invalid: p.invalid || p.active != 0 && !openOuterControl}
 	for i, v := range p.laps[:canonicalDeepLapCount] {
 		out.laps[i] = canonicalLapEvidence{totalNS: int64(v.total), begun: v.begun, done: v.done, incomplete: v.incomplete}
 		if v.begun != 0 {

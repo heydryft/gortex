@@ -630,13 +630,9 @@ func readGoFileIfExists(absPath string) ([]byte, bool, error) {
 	return nil, false, fmt.Errorf("could not read target file: %w", err)
 }
 
-// inferGoPackageForDir picks a package name for a new Go file in `dir`.
-// Priority: explicit override, package of an existing .go sibling, then
-// the directory's leaf name.
-func inferGoPackageForDir(dir, override string) string {
-	return inferGoPackageForDirObserved(nil, dir, override)
-}
-
+// inferGoPackageForDirObserved picks a package name for a new Go file.
+// Priority: explicit override, existing Go sibling, then directory leaf name.
+// The optional owner observes only actual parser calls.
 func inferGoPackageForDirObserved(ack *editAcknowledgement, dir, override string) string {
 	if override != "" {
 		return override

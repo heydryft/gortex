@@ -2131,19 +2131,6 @@ func (w *Watcher) completeMutationWaitersIfCurrent(path string, appliedGeneratio
 	return w.completeMutationWaitersGuarded(path, appliedGeneration, err, DerivedFanoutCompleteness{}, true)
 }
 
-// completeMutationWaitersWithFanout is the arm that actually ran the graph
-// patch, so it is the only one that has a derived-fan-out observation to
-// publish. Every other completion arm reports the zero value, which reads as
-// "not observed" rather than as a complete fan-out.
-func (w *Watcher) completeMutationWaitersWithFanout(
-	path string,
-	appliedGeneration uint64,
-	err error,
-	fanout DerivedFanoutCompleteness,
-) bool {
-	return w.completeMutationWaitersGuarded(path, appliedGeneration, err, fanout, true)
-}
-
 func (w *Watcher) completeMutationWaitersGuarded(
 	path string,
 	appliedGeneration uint64,
