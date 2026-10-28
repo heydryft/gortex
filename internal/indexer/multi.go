@@ -100,6 +100,9 @@ type MultiIndexer struct {
 	logger              *zap.Logger
 	loggedCollisions    sync.Map
 	canonicalRoot       func(string) string
+	// prefixStats bounds only the filesystem observations used to establish
+	// prefix ownership. A timed-out native Stat is not a store producer.
+	prefixStats prefixStatAllowance
 	// newIndexer is instance-local so lifecycle tests can observe a constructor
 	// failure without publishing the candidate Indexer. Production instances set
 	// it to New; every per-repository construction flows through this factory.
