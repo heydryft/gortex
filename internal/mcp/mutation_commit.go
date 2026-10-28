@@ -342,10 +342,17 @@ func (r *mutationCommitRecord) recordGraphForReceipt(expectedReceipt string, out
 		r.pendingSourceRecovered = false
 	}
 	admission := r.readRepairAdmission.Value()
-	compatibleAdmission := admission != nil && admission.generation == outcome.Generation &&
-		(outcome.Receipt == "" || outcome.Receipt == admission.id) &&
+	var admittedReceipt string
+	var admittedGeneration uint64
+	if admission != nil {
+		admittedReceipt, admittedGeneration = admission.id, admission.generation
+	} else if r.readRepair != nil {
+		admittedReceipt, admittedGeneration = r.readRepair.requestedReceipt, r.readRepair.requestedGeneration
+	}
+	compatibleAdmission := admittedGeneration != 0 && admittedGeneration == outcome.Generation &&
+		(outcome.Receipt == "" || outcome.Receipt == admittedReceipt) &&
 		(outcome.checkoutID == "" || (r.checkoutID == outcome.checkoutID && r.checkoutIncarnation == outcome.checkoutIncarnation))
-	if !compatibleAdmission && (admission != nil || r.reindexReceipt != outcome.Receipt || r.reindexGeneration != outcome.Generation ||
+	if !compatibleAdmission && (admittedGeneration != 0 || r.reindexReceipt != outcome.Receipt || r.reindexGeneration != outcome.Generation ||
 		(outcome.checkoutID != "" && (r.checkoutID != outcome.checkoutID || r.checkoutIncarnation != outcome.checkoutIncarnation))) {
 		r.readRepair = nil
 		r.readRepairAdmission = weak.Pointer[mutationReceipt]{}

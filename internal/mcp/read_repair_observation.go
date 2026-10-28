@@ -19,6 +19,10 @@ type mutationReadRepairObservation struct {
 	windowNS   int64
 	causes     [8]mutationReadRepairCause
 	causeCount int
+	// Frozen admission identity survives that existing receipt's shorter TTL;
+	// accepted R is retained by the mutation ledger, not by the receipt map.
+	requestedReceipt    string
+	requestedGeneration uint64
 }
 
 type mutationReadRepairCause struct {
@@ -201,6 +205,7 @@ func (w mutationReadRepairWitness) bind(accepted mutationReadRepairObservation) 
 		record.publication == nil || record.publication != w.publication.Value() || record.readRepair != nil {
 		return
 	}
+	accepted.requestedReceipt, accepted.requestedGeneration = w.receipt, w.generation
 	record.readRepair = &accepted
 }
 

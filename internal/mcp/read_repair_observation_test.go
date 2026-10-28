@@ -131,6 +131,39 @@ func TestReadRepairSeesCommittedAdmissionBeforeACKAndSurvivesSuccessClear(t *tes
 	runtime.KeepAlive(idx)
 }
 
+func TestReadRepairAcceptedAdmissionSurvivesReceiptExpiryButRejectsForeignRebind(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		outcome mutationReindexOutcome
+		keep    bool
+	}{
+		{"success_clear", mutationReindexOutcome{Generation: 1, Reindexed: true}, true},
+		{"pending_original", mutationReindexOutcome{Generation: 1, Receipt: "publication", Pending: true}, true},
+		{"foreign_receipt", mutationReindexOutcome{Generation: 1, Receipt: "foreign", Pending: true}, false},
+		{"foreign_generation", mutationReindexOutcome{Generation: 2, Receipt: "publication", Pending: true}, false},
+		{"unknown_admission", mutationReindexOutcome{Reindexed: true}, false},
+		{"foreign_incarnation", mutationReindexOutcome{Generation: 1, Receipt: "publication", Pending: true, checkoutID: "checkout", checkoutIncarnation: "other"}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s, record, witness, phases := newReadRepairWitnessFixture(t)
+			witness.bind(mutationReadRepairObservation{generation: 2, windowNS: 10})
+			early := record.snapshot()
+			require.NotNil(t, early.readRepair)
+			// Model disappearance of the weak admission after its existing
+			// map retention, without depending on GC or adding lifecycle work.
+			s.mutationReceipts.Delete("publication")
+			record.mu.Lock()
+			record.readRepairAdmission = weak.Pointer[mutationReceipt]{}
+			record.mu.Unlock()
+			record.recordGraph(test.outcome)
+			require.Equal(t, test.keep, record.snapshot().readRepair != nil)
+			require.EqualValues(t, 2, early.readRepair.generation)
+			runtime.KeepAlive(s)
+			runtime.KeepAlive(phases)
+		})
+	}
+}
+
 func TestReadRepairBindingRejectsEvictionRebindAndNewerCommit(t *testing.T) {
 	for _, test := range []struct {
 		name   string
