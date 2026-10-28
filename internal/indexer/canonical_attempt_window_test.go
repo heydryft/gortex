@@ -33,12 +33,15 @@ func TestCanonicalAttemptWindowFinishesAfterDoneAndCohortRelease(t *testing.T) {
 	require.Equal(t, "measured", earlyTimings.States["derived"], "open finalization must not invalidate the frozen completed executor")
 	require.Nil(t, earlyTimings.Window.PatchWallMS, "actual return is still blocked on cohort release")
 	require.Empty(t, logs.FilterMessage("graph patch attempt complete").All())
+	completedNS := phaseOffsets(early)[PublicationTicketCompleted]
+	require.Eventually(t, func() bool { return time.Now().Sub(record.origin).Nanoseconds() > completedNS },
+		5*time.Second, time.Millisecond, "the held cohort cannot return until the observed clock advances past Done")
 	releaseAt := time.Now()
 	unblock()
 	require.Eventually(t, func() bool { return record.Snapshot().attemptWindow != nil }, 2*time.Second, time.Millisecond)
 	late := record.Snapshot()
 	require.GreaterOrEqual(t, late.attemptWindow.endNS, releaseAt.Sub(record.origin).Nanoseconds())
-	require.Greater(t, late.attemptWindow.endNS, phaseOffsets(early)[PublicationTicketCompleted], "P can honestly outlive receipt terminal")
+	require.Greater(t, late.attemptWindow.endNS, completedNS, "P can honestly outlive receipt terminal")
 	require.NotNil(t, late.EditTimings().Window.PatchWallMS)
 	require.Equal(t, "partial", late.EditTimings().Window.Coverage)
 	require.Equal(t, earlyTimings, early.EditTimings(), "previously exposed terminal snapshots remain immutable")

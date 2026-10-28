@@ -48,6 +48,19 @@ func TestCanonicalPatchRealChunksAggregateWithoutChargingInterleavedWork(t *test
 		bumpMtime(t, path, fmt.Sprintf("package p\nfunc After%02d() { After%02d() }\n", i, (i+1)%len(paths)))
 	}
 	r, s := beginRealPatchObservation(t)
+	observedInterleavedGap := false
+	idx.affectedByDeltaHook = func(string, []string) {
+		if observedInterleavedGap {
+			return
+		}
+		s.mu.Lock()
+		parseEnd := s.patchLaps.laps[patchParse].last
+		s.mu.Unlock()
+		require.False(t, parseEnd.IsZero(), "the real apply hook follows a completed parse chunk")
+		require.Eventually(t, func() bool { return time.Now().After(parseEnd) }, 5*time.Second, time.Millisecond,
+			"observe an actual interleaved apply interval before the next parse chunk")
+		observedInterleavedGap = true
+	}
 	var bookkeepingHooks []string
 	idx.incrementalCatchupHook = func(kind string, _ []string) {
 		if kind != "dataflow" && kind != "ref_facts" {
@@ -83,6 +96,7 @@ func TestCanonicalPatchRealChunksAggregateWithoutChargingInterleavedWork(t *test
 	require.GreaterOrEqual(t, evidence.laps[patchSearch].done, uint64(2))
 	require.GreaterOrEqual(t, evidence.laps[patchApply].done, uint64(4), "apply is split at each real search boundary")
 	parse := evidence.laps[patchParse]
+	require.True(t, observedInterleavedGap)
 	require.Less(t, parse.totalNS, parse.lastNS-parse.firstNS, "the first→last parse envelope includes intervening apply/search and must not be used as parse time")
 	var sum int64
 	timings := snapshot.EditTimings()
