@@ -39,6 +39,9 @@ func (s *Server) committedPublicationRecord(ctx context.Context, path string) *i
 }
 
 func (s *Server) openCommittedPublicationRecord(ctx context.Context, record *mutationCommitRecord) *indexer.PublicationPhaseRecord {
+	if !record.isPhysicalCommit() {
+		return nil
+	}
 	ledger := &s.mutationCommits
 	ledger.mu.Lock()
 	record.mu.RLock()
@@ -95,6 +98,9 @@ func completeCanonicalPublication(record *indexer.PublicationPhaseRecord, result
 // retainedMutationPublication is status-only. Holding the pointer in one reply
 // does not extend its registry lifetime or mutate the record's binding.
 func retainedMutationPublication(record *mutationCommitRecord) (*indexer.PublicationPhaseRecord, time.Time) {
+	if !record.isPhysicalCommit() {
+		return nil, time.Time{}
+	}
 	record.mu.RLock()
 	defer record.mu.RUnlock()
 	return record.publication, record.committedAt

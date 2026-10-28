@@ -259,6 +259,21 @@ produce explicit states, not clipped or residual-derived timings. The
 middleware, waits, reply preparation and unsupported paths remain unclassified.
 No acknowledgement wire fields or additional patch log lines are emitted yet.
 
+Atomic batches now reserve one scalar `batch-ack-*` reference only in the
+original execution arm. The timing payload occupies a distinct batch-only kind
+inside the same bounded mutation ledger and shares its existing expiry/cap;
+there is no second registry or timer. Transaction state retains no timing
+pointer or snapshot, and the durable manifest/version is unchanged. Duplicate,
+status and recovery replies cannot replace the original RPC wall. Eviction or
+restart makes the private lookup explicitly unavailable.
+
+The batch-only ledger kind cannot enter physical receipt/replay/freshness/path
+indexes, source-evidence registration, physical status/listings, commit notes,
+publication records or disk/graph outcome setters. It supplies no invented
+disk or freshness verdict. The private lookup checks the scalar reference and
+fixed-size transaction identity before borrowing an owned timing snapshot.
+Wire exposure and complete batch parser/durability lap coverage remain pending.
+
 ## Logical source-operation witness (transport pending)
 
 The MCP Server privately counts actual completion of the five measured source

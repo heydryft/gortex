@@ -150,6 +150,9 @@ func (s *Server) graphRefreshReceiptPayload(ctx context.Context, id string) (map
 }
 
 func mutationCommitInScope(ctx context.Context, record *mutationCommitRecord) bool {
+	if !record.isPhysicalCommit() {
+		return false
+	}
 	checkoutID, incarnation := mutationCheckoutScope(ctx)
 	record.mu.RLock()
 	defer record.mu.RUnlock()
@@ -176,6 +179,9 @@ func (s *Server) recentMutationCommitInScope(ctx context.Context, path string) (
 // pending receipt would read as pending forever, which is precisely the stale
 // answer this tool exists to avoid.
 func (s *Server) mutationStatusPayload(record *mutationCommitRecord) map[string]any {
+	if !record.isPhysicalCommit() {
+		return map[string]any{"found": false, "reason": "not_physical_commit"}
+	}
 	s.refreshPendingSourceRecord(record)
 	snap := record.snapshot()
 	payload := map[string]any{

@@ -32,6 +32,9 @@ var editAcknowledgementSequence atomic.Uint64
 // never installs one: eviction clears the record's ownership even when other
 // pending-source evidence still retains the physical commit record.
 func retainedMutationAcknowledgement(record *mutationCommitRecord) *editAcknowledgement {
+	if !record.isPhysicalCommit() {
+		return nil
+	}
 	record.mu.RLock()
 	defer record.mu.RUnlock()
 	return record.acknowledgement

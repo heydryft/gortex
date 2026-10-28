@@ -98,7 +98,15 @@ var mutationDiskCommitSequence atomic.Uint64
 // the client knows retrying is safe.
 var errMutationNotApplied = errors.New("mutation not applied")
 
+type mutationCommitKind uint8
+
+const (
+	physicalMutationCommit mutationCommitKind = iota
+	batchAcknowledgementCommit
+)
+
 type mutationCommitRecord struct {
+	kind                   mutationCommitKind // immutable; zero retains the existing physical-record contract
 	mu                     sync.RWMutex
 	owner                  *Server
 	pendingSourceRecovered bool
@@ -145,6 +153,9 @@ type mutationCommitRecord struct {
 	// only while this record belongs to the bounded ledger. Pending-source
 	// evidence can outlive that ownership, so eviction must clear this too.
 	acknowledgement *editAcknowledgement
+	// Only batchAcknowledgementCommit uses this fixed-size identity. It has
+	// no disk/graph outcome and cannot enter any physical mutation index.
+	batchOwner [32]byte
 
 	// response is the successful tool payload, retained only for records that
 	// carry a caller-chosen mutation_id. Without a key there is nothing to
@@ -179,6 +190,9 @@ type mutationCommitSnapshot struct {
 }
 
 func (r *mutationCommitRecord) snapshot() mutationCommitSnapshot {
+	if !r.isPhysicalCommit() {
+		return mutationCommitSnapshot{}
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	snap := mutationCommitSnapshot{
@@ -210,12 +224,18 @@ func (r *mutationCommitRecord) snapshot() mutationCommitSnapshot {
 }
 
 func (r *mutationCommitRecord) diskStatus() string {
+	if !r.isPhysicalCommit() {
+		return ""
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.disk
 }
 
 func (r *mutationCommitRecord) markNotApplied(err error) {
+	if !r.isPhysicalCommit() {
+		return
+	}
 	r.mu.Lock()
 	defer func() {
 		r.mu.Unlock()
@@ -232,6 +252,9 @@ func (r *mutationCommitRecord) markNotApplied(err error) {
 }
 
 func (r *mutationCommitRecord) markFailed(err error) {
+	if !r.isPhysicalCommit() {
+		return
+	}
 	r.mu.Lock()
 	defer func() {
 		r.mu.Unlock()
@@ -248,6 +271,9 @@ func (r *mutationCommitRecord) markFailed(err error) {
 }
 
 func (r *mutationCommitRecord) markCommitted(newSHA string, bytesWritten int) {
+	if !r.isPhysicalCommit() {
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.disk = mutationDiskCommitted
@@ -270,7 +296,7 @@ func (r *mutationCommitRecord) recordGraph(outcome mutationReindexOutcome) {
 // An asynchronous observer may apply only to the receipt it sampled. Empty
 // expectedReceipt is reserved for the mutation handler binding its outcome.
 func (r *mutationCommitRecord) recordGraphForReceipt(expectedReceipt string, outcome mutationReindexOutcome) {
-	if r == nil {
+	if !r.isPhysicalCommit() {
 		return
 	}
 	// Keep the binding and the outcome atomic with respect to ledger readers.
@@ -328,6 +354,9 @@ func (r *mutationCommitRecord) recordGraphForReceipt(expectedReceipt string, out
 }
 
 func (r *mutationCommitRecord) markSourceRecoveredForReceipt(expectedReceipt string) {
+	if !r.isPhysicalCommit() {
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if expectedReceipt != "" && r.reindexReceipt == expectedReceipt {
@@ -338,6 +367,9 @@ func (r *mutationCommitRecord) markSourceRecoveredForReceipt(expectedReceipt str
 // A missing bound ticket is terminal failure, never publication evidence. The
 // identity/state recheck avoids overriding a concurrent rebind or completion.
 func (r *mutationCommitRecord) markReceiptLost(id string) {
+	if !r.isPhysicalCommit() {
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if id == "" || r.reindexReceipt != id ||
@@ -353,7 +385,7 @@ func (r *mutationCommitRecord) markReceiptLost(id string) {
 // retainResponse stores the successful payload for idempotent replay. Only
 // keyed records retain it — see mutationCommitRecord.response.
 func (r *mutationCommitRecord) retainResponse(resp map[string]any) {
-	if r == nil {
+	if !r.isPhysicalCommit() {
 		return
 	}
 	r.mu.Lock()
@@ -369,6 +401,9 @@ func (r *mutationCommitRecord) retainResponse(resp map[string]any) {
 }
 
 func (r *mutationCommitRecord) replayResponse() (map[string]any, bool) {
+	if !r.isPhysicalCommit() {
+		return nil, false
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if r.response == nil {
@@ -379,6 +414,10 @@ func (r *mutationCommitRecord) replayResponse() (map[string]any, bool) {
 		clone[key] = value
 	}
 	return clone, true
+}
+
+func (r *mutationCommitRecord) isPhysicalCommit() bool {
+	return r != nil && r.kind == physicalMutationCommit
 }
 
 // graphStatusFor collapses a reindex outcome into the graph half of a receipt.
@@ -399,6 +438,9 @@ func graphStatusFor(outcome mutationReindexOutcome) string {
 // rather than a sync.Map because eviction needs a total order over entries, and
 // bounding it matters more here than lock-free reads on a path that already
 // performs a filesystem write.
+// A distinct batch-only acknowledgement kind shares the same bound, but is
+// excluded from every physical/source/replay index and listing. This ledger
+// is not a general-purpose timing registry.
 type mutationCommitLedger struct {
 	mu               sync.Mutex
 	byID             map[string]*mutationCommitRecord
@@ -417,11 +459,11 @@ func (l *mutationCommitLedger) put(record *mutationCommitRecord) {
 	}
 	l.evictLocked(time.Now())
 	l.byID[record.id] = record
-	if record.key != "" {
+	if record.isPhysicalCommit() && record.key != "" {
 		l.byKey[record.key] = record
 	}
 	record.mu.RLock()
-	if record.reindexReceipt != "" {
+	if record.isPhysicalCommit() && record.reindexReceipt != "" {
 		l.byReindexReceipt[record.reindexReceipt] = record
 	}
 	record.mu.RUnlock()
@@ -431,6 +473,9 @@ func (l *mutationCommitLedger) put(record *mutationCommitRecord) {
 // unbindFreshnessLocked requires the ledger lock and the record's read or
 // write lock. Another commit may have claimed the same receipt in the interim.
 func (l *mutationCommitLedger) unbindFreshnessLocked(record *mutationCommitRecord) {
+	if !record.isPhysicalCommit() {
+		return
+	}
 	if l.byReindexReceipt[record.reindexReceipt] == record {
 		delete(l.byReindexReceipt, record.reindexReceipt)
 	}
@@ -480,6 +525,9 @@ func (l *mutationCommitLedger) byReceipt(id string) (*mutationCommitRecord, bool
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	record, ok := l.byID[id]
+	if !ok || !record.isPhysicalCommit() {
+		return nil, false
+	}
 	return record, ok
 }
 
@@ -487,6 +535,9 @@ func (l *mutationCommitLedger) byMutationID(key string) (*mutationCommitRecord, 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	record, ok := l.byKey[key]
+	if !ok || !record.isPhysicalCommit() {
+		return nil, false
+	}
 	return record, ok
 }
 
@@ -494,6 +545,9 @@ func (l *mutationCommitLedger) byFreshnessReceipt(id string) (*mutationCommitRec
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	record, ok := l.byReindexReceipt[id]
+	if !ok || !record.isPhysicalCommit() {
+		return nil, false
+	}
 	return record, ok
 }
 
@@ -505,6 +559,9 @@ func (l *mutationCommitLedger) recentForPath(relPath string) (*mutationCommitRec
 	defer l.mu.Unlock()
 	for i := len(l.ordered) - 1; i >= 0; i-- {
 		record := l.ordered[i]
+		if !record.isPhysicalCommit() {
+			continue
+		}
 		record.mu.RLock()
 		match := record.relPath == relPath || record.absPath == relPath
 		record.mu.RUnlock()
@@ -523,7 +580,9 @@ func (l *mutationCommitLedger) recent(limit int) []*mutationCommitRecord {
 	}
 	out := make([]*mutationCommitRecord, 0, limit)
 	for i := len(l.ordered) - 1; i >= 0 && len(out) < limit; i-- {
-		out = append(out, l.ordered[i])
+		if l.ordered[i].isPhysicalCommit() {
+			out = append(out, l.ordered[i])
+		}
 	}
 	return out
 }
@@ -549,7 +608,7 @@ func mutationCommitNoteFrom(ctx context.Context) *mutationCommitNote {
 }
 
 func (n *mutationCommitNote) observe(record *mutationCommitRecord) {
-	if n == nil || record == nil {
+	if n == nil || !record.isPhysicalCommit() {
 		return
 	}
 	n.mu.Lock()
@@ -696,7 +755,7 @@ func mutationNotAppliedMessage(what string, record *mutationCommitRecord, err er
 // attachMutationCommit puts the disk half of the receipt on a success payload.
 // The graph half rides on the same response via attachMutationFreshness.
 func attachMutationCommit(resp map[string]any, record *mutationCommitRecord) {
-	if record == nil {
+	if !record.isPhysicalCommit() {
 		return
 	}
 	resp["mutation_receipt"] = record.id

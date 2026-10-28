@@ -95,6 +95,9 @@ type batchTransactionState struct {
 	recoveryMu  sync.Mutex
 	mu          sync.RWMutex
 	receipt     batchTransactionReceipt
+	// A scalar reference only: the bounded mutation ledger owns timing data.
+	// This is neither durable journal metadata nor a pointer to an RPC history.
+	acknowledgementReceipt string
 }
 
 // cloneBatchReceipt returns a receipt that shares no slice or map storage with
@@ -1037,6 +1040,7 @@ func (s *Server) runBatchTransaction(ctx context.Context, edits []batchEditItem,
 		s.refreshBatchGraph(ctx, state)
 		return state.snapshot(), nil
 	}
+	s.bindBatchAcknowledgement(ctx, state)
 
 	// Only the original new transaction owns source effects. Duplicate/status
 	// and recovery replies above must not count another logical edit. This
