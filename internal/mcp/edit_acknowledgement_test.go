@@ -151,12 +151,26 @@ func TestEditAcknowledgementCallerReadyPrecedesLatePhysicalHandler(t *testing.T)
 	require.Equal(t, "go_error", frozen.ReplyOutcome)
 	require.Equal(t, "pending", frozen.ActualState)
 	require.Zero(t, s.editOperations.completed.Load())
+	waitPastAcknowledgementReply(t, record)
 	unblock()
 	require.Eventually(t, func() bool { return record.snapshot().ActualState == "measured" }, 5*time.Second, time.Millisecond)
 	after := record.snapshot()
 	require.Equal(t, frozen.ReplyWallMS, after.ReplyWallMS)
 	require.True(t, after.ActualFinishedLate)
 	require.EqualValues(t, 1, s.editOperations.completed.Load())
+}
+
+// Channel ordering alone need not advance a coarse monotonic clock. Keep the
+// actual handler held until a real reading is later than the frozen reply, so
+// the strict late/outside-window assertions have measured separation.
+func waitPastAcknowledgementReply(t *testing.T, record *editAcknowledgement) {
+	t.Helper()
+	record.mu.Lock()
+	reply := record.reply
+	record.mu.Unlock()
+	require.False(t, reply.IsZero(), "caller reply must already be frozen")
+	require.Eventually(t, func() bool { return time.Now().After(reply) }, 5*time.Second, time.Millisecond,
+		"monotonic clock did not advance past the frozen caller reply")
 }
 
 func TestEditAcknowledgementReadsKeepBaselineAllocationsAndNoIdentity(t *testing.T) {

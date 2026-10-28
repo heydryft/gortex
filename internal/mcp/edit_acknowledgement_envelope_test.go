@@ -192,6 +192,7 @@ func TestAcknowledgementEnvelopeLateLeafDoesNotClipCleanupIntoReply(t *testing.T
 	require.Nil(t, frozen.ReplyPrepare.ObservedMS)
 	require.Equal(t, "incomplete", frozen.EditControl.State)
 	require.Nil(t, frozen.EditControl.AckMS)
+	waitPastAcknowledgementReply(t, a)
 	unblock()
 	require.Eventually(t, func() bool { return a.snapshot().ActualState == "measured" }, 5*time.Second, time.Millisecond)
 	after := a.snapshot()

@@ -67,8 +67,13 @@ func TestMCPDispatchTimingQueuedGrantIsNotEarlyAdmissionSignal(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("queue did not release the connection reader")
 	}
-	_, available := MCPDispatchTimingForContext(ctx)
+	queued, available := MCPDispatchTimingForContext(ctx)
 	require.False(t, available, "admission.done is not the actual channel grant")
+	require.False(t, queued.Entered.IsZero())
+	// The held slot proves queue ordering; a real later clock reading also
+	// proves the strict measured interval on coarse Windows clocks.
+	require.Eventually(t, func() bool { return time.Now().After(queued.Entered) }, 5*time.Second, time.Millisecond,
+		"monotonic clock did not advance while dispatch capacity was held")
 	release()
 	select {
 	case err := <-done:
