@@ -188,12 +188,16 @@ func TestRepositoryPrefixCollisionAfterCoordination(t *testing.T) {
 					result, err = mi.TrackRepoCtx(t.Context(), config.RepoEntry{Path: second})
 				}
 				require.True(t, admitted)
-				if samePath || reconcile {
+				if samePath {
 					require.NoError(t, err)
 				} else {
 					var collision *PrefixCollisionError
 					require.ErrorAs(t, err, &collision)
 					assert.Equal(t, first, collision.ExistingPath)
+					if reconcile {
+						var skipped *RepositoryCollisionSkip
+						require.ErrorAs(t, err, &skipped, "the coordinated loser must remain a typed unchanged skip")
+					}
 				}
 				assert.Nil(t, result)
 				assert.Len(t, mi.AllMetadata(), 1)
