@@ -143,7 +143,7 @@ func TestVacuumUnconfirmedDirectoryDoesNotRun(t *testing.T) {
 	require.ErrorIs(t, err, ErrVacuumTempDirectory)
 	require.False(t, called)
 	require.NoError(t, s.CompactContext(t.Context()), "memory compatibility path does not open a second database")
-	require.Error(t, s.CompactContext(nil))
+	require.Error(t, s.CompactContext(nil)) //nolint:staticcheck // SA1012: Verify explicit nil-context rejection.
 }
 
 func TestVacuumTwoStoresKeepDistinctDirectories(t *testing.T) {
