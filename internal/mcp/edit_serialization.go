@@ -560,7 +560,9 @@ func (s *Server) mutationReindexState(ctx context.Context, absPath string) mutat
 			// reports. Nil whenever no generation stack answered this request.
 			pin := handoffRequestView(ctx, viewmetrics.HandoffFileMutation)
 			publication := s.committedPublicationRecord(ctx, absPath)
+			admissionLap := s.beginAcknowledgementLap(ctx, editAckTicketAdmission)
 			ticket, scheduleErr := scheduler.EnqueueFileMutation(indexer.WithPublicationRecord(context.WithoutCancel(ctx), publication), absPath)
+			admissionLap.finish()
 			if scheduleErr != nil {
 				failMutationPhases(publication)
 				pin.release()

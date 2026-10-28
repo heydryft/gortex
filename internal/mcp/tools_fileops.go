@@ -1015,7 +1015,7 @@ func (s *Server) handleEditFile(ctx context.Context, req mcp.CallToolRequest) (*
 	allowParseErrors := req.GetBool("allow_parse_errors", false)
 	var gate parseGateResult
 	if parseGateEnabled() {
-		gate = checkParseGate(relPath, content, newContentBytes)
+		gate = s.checkAcknowledgedParseGate(ctx, relPath, content, newContentBytes)
 		if gate.Blocked && !allowParseErrors && !dryRun {
 			return mcp.NewToolResultError(parseGateError(relPath, gate)), nil
 		}
@@ -1190,7 +1190,7 @@ func (s *Server) handleWriteFile(ctx context.Context, req mcp.CallToolRequest) (
 	allowParseErrors := req.GetBool("allow_parse_errors", false)
 	var gate parseGateResult
 	if parseGateEnabled() {
-		gate = checkParseGate(relPath, priorContent, contentBytes)
+		gate = s.checkAcknowledgedParseGate(ctx, relPath, priorContent, contentBytes)
 		if gate.Blocked && !allowParseErrors && !dryRun {
 			return mcp.NewToolResultError(parseGateError(relPath, gate)), nil
 		}

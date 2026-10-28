@@ -667,7 +667,10 @@ func (s *Server) commitFileMutation(
 	record.diskWriteStartedAt = time.Now()
 	record.mu.Unlock()
 	indexer.StampPublicationPhase(ctx, indexer.PublicationDiskWriteStarted)
-	if err := agents.AtomicWriteFile(absPath, data, perm); err != nil {
+	diskLap := s.beginAcknowledgementLap(ctx, editAckDiskWrite)
+	writeErr := agents.AtomicWriteFile(absPath, data, perm)
+	diskLap.finish() // actual call end, before committed-hash/receipt bookkeeping
+	if err := writeErr; err != nil {
 		record.markFailed(err)
 		return record, err
 	}

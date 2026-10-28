@@ -21,6 +21,7 @@ type editAcknowledgement struct {
 	actual  time.Time
 	reply   time.Time
 	outcome string
+	laps    editAcknowledgementLaps
 }
 
 type editAcknowledgementKey struct{}
@@ -52,6 +53,10 @@ type editAcknowledgementSnapshot struct {
 	DispatcherQueueState string
 	DispatcherPreambleMS *float64
 	DispatcherState      string
+	ParseGate            editAcknowledgementLapSnapshot
+	DiskWrite            editAcknowledgementLapSnapshot
+	TicketAdmission      editAcknowledgementLapSnapshot
+	LapsDisjoint         bool
 }
 
 func editAcknowledgementFrom(ctx context.Context, owner *Server) *editAcknowledgement {
@@ -111,7 +116,7 @@ func (a *editAcknowledgement) finishReplyAt(at time.Time, outcome string) {
 
 func (a *editAcknowledgement) snapshot() editAcknowledgementSnapshot {
 	a.mu.Lock()
-	actual, reply, outcome := a.actual, a.reply, a.outcome
+	actual, reply, outcome, laps := a.actual, a.reply, a.outcome, a.laps
 	a.mu.Unlock()
 	result := editAcknowledgementSnapshot{
 		RPCID: a.id, Scope: "mcp_bound_call", ReplyOutcome: outcome,
@@ -121,6 +126,10 @@ func (a *editAcknowledgement) snapshot() editAcknowledgementSnapshot {
 	result.ReplyWallMS, result.ReplyState = editAcknowledgementWall(a.entered, reply)
 	result.ActualWallMS, result.ActualState = editAcknowledgementWall(a.entered, actual)
 	result.ActualFinishedLate = result.ReplyState == "measured" && result.ActualState == "measured" && actual.After(reply)
+	result.ParseGate = laps.snapshot(editAckParseGate, a.entered, reply, actual)
+	result.DiskWrite = laps.snapshot(editAckDiskWrite, a.entered, reply, actual)
+	result.TicketAdmission = laps.snapshot(editAckTicketAdmission, a.entered, reply, actual)
+	result.LapsDisjoint = !laps.overlap
 	return result
 }
 

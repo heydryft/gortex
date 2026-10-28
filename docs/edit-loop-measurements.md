@@ -238,9 +238,26 @@ This ownership slice does not publish acknowledgement wire fields. It does not
 attach pointers to `batchTransactions`, whose existing map has no bounded
 eviction. Dispatcher queue/preamble are explicitly
 unavailable pending the shared admission interface; actual parse/disk/enqueue
-laps, bounded receipt attachment and additive-sum validation are subsequent
-work. It does not change the validated actual-completion counters or CPU/WAL
+laps and additive-sum validation are partial work. It does not change the validated actual-completion counters or CPU/WAL
 sampling. Read/native-path and mutation overhead still require measurement.
+
+The private fixed acknowledgement accumulator now observes the actual pre-write
+parse-gate call in `edit_file`/`write_file`, the `AtomicWriteFile` call (ending
+before committed-hash/receipt bookkeeping), and canonical/checkout refresh
+enqueue calls. Repeated chunks occupy fixed slots rather than a span history.
+An unsupported parse gate is not applicable; an instrumented raw commit that
+did not call a gate does not acquire a fabricated parse duration. Other tools'
+actual parser and durability work is not inferred from these slots.
+
+Each slot retains begin/completion counts, actual elapsed execution and interval
+validity. Snapshot `ObservedMS` is completed execution; `AckMS` is an alternative
+value present only when every applicable chunk is valid and contained in the
+frozen reply window. A late interval keeps its full execution observation and
+no acknowledgement duration. Overlap, missing ends and invalid containment
+produce explicit states, not clipped or residual-derived timings. The
+`LapsDisjoint` flag alone proves neither coverage nor the 5% sum requirement;
+middleware, waits, reply preparation and unsupported paths remain unclassified.
+No acknowledgement wire fields or additional patch log lines are emitted yet.
 
 ## Logical source-operation witness (transport pending)
 
