@@ -14,14 +14,15 @@ import (
 // Its origin precedes boundHandler, not the dispatcher/transport or the legacy
 // publication origin at middleware entry. No graph work is inferred from it.
 type editAcknowledgement struct {
-	owner   *Server
-	id      uint64
-	entered time.Time
-	mu      sync.Mutex
-	actual  time.Time
-	reply   time.Time
-	outcome string
-	laps    editAcknowledgementLaps
+	owner    *Server
+	id       uint64
+	entered  time.Time
+	mu       sync.Mutex
+	actual   time.Time
+	reply    time.Time
+	outcome  string
+	laps     editAcknowledgementLaps
+	envelope editAcknowledgementEnvelope
 }
 
 type editAcknowledgementKey struct{}
@@ -60,6 +61,8 @@ type editAcknowledgementSnapshot struct {
 	DiskWrite            editAcknowledgementLapSnapshot
 	TicketAdmission      editAcknowledgementLapSnapshot
 	ReindexWait          editAcknowledgementLapSnapshot
+	Middleware           editAcknowledgementLapSnapshot
+	ReplyPrepare         editAcknowledgementLapSnapshot
 	LapsDisjoint         bool
 }
 
@@ -120,7 +123,7 @@ func (a *editAcknowledgement) finishReplyAt(at time.Time, outcome string) {
 
 func (a *editAcknowledgement) snapshot() editAcknowledgementSnapshot {
 	a.mu.Lock()
-	actual, reply, outcome, laps := a.actual, a.reply, a.outcome, a.laps
+	actual, reply, outcome, laps, envelope := a.actual, a.reply, a.outcome, a.laps, a.envelope
 	a.mu.Unlock()
 	result := editAcknowledgementSnapshot{
 		RPCID: a.id, Scope: "mcp_bound_call", ReplyOutcome: outcome,
@@ -135,6 +138,17 @@ func (a *editAcknowledgement) snapshot() editAcknowledgementSnapshot {
 	result.TicketAdmission = laps.snapshot(editAckTicketAdmission, a.entered, reply, actual)
 	result.ReindexWait = laps.snapshot(editAckReindexWait, a.entered, reply, actual)
 	result.LapsDisjoint = !laps.overlap
+	result.Middleware, result.ReplyPrepare = envelope.snapshot(a.entered, reply, actual)
+	// These outer intervals surround, rather than contain, the leaf's fixed
+	// operation laps. A misplaced operation must not produce a plausible sum.
+	if envelope.observed {
+		for _, lap := range laps.data {
+			if lap.started > 0 && (envelope.leafStarted.IsZero() || lap.first.Before(envelope.leafStarted) ||
+				(!envelope.leafFinished.IsZero() && lap.last.After(envelope.leafFinished))) {
+				result.LapsDisjoint = false
+			}
+		}
+	}
 	return result
 }
 

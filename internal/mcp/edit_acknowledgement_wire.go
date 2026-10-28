@@ -48,7 +48,7 @@ func buildAcknowledgementPayload(snapshot *editAcknowledgementSnapshot, state st
 		CombinedAckPatchSumState: "not_additive_overlapping_lifetimes",
 		ExistingPhaseScope:       "legacy_per_receipt_publication", PublicationResidualState: "legacy_per_receipt_publication",
 		PhasesMS: make(map[string]*float64, 9), PhaseStates: make(map[string]string, 9),
-		Counts: make(map[string]acknowledgementLapCount, 4), ObservedExecutionMS: make(map[string]*float64, 4),
+		Counts: make(map[string]acknowledgementLapCount, 6), ObservedExecutionMS: make(map[string]*float64, 6),
 	}
 	for _, name := range []string{"dispatcher_queue", "dispatcher_preamble", "middleware", "parse", "disk_write", "publish", "reindex_wait", "reply_prepare", "transport"} {
 		out.PhasesMS[name], out.PhaseStates[name] = nil, state
@@ -66,15 +66,17 @@ func buildAcknowledgementPayload(snapshot *editAcknowledgementSnapshot, state st
 	for _, name := range []string{"dispatcher_queue", "dispatcher_preamble"} {
 		out.PhaseStates[name] = "unavailable_dispatcher_interface"
 	}
-	for _, name := range []string{"middleware", "reply_prepare", "transport"} {
-		out.PhaseStates[name] = "unavailable_boundary"
-	}
+	out.PhaseStates["transport"] = "unavailable_boundary"
 	var subtotal float64
 	observed, invalid := 0, false
 	for name, lap := range map[string]editAcknowledgementLapSnapshot{
+		"middleware": snapshot.Middleware, "reply_prepare": snapshot.ReplyPrepare,
 		"parse": snapshot.ParseGate, "disk_write": snapshot.DiskWrite,
 		"publish": snapshot.TicketAdmission, "reindex_wait": snapshot.ReindexWait,
 	} {
+		if lap.State == "" {
+			lap.State = "unobserved"
+		}
 		out.PhasesMS[name], out.PhaseStates[name] = lap.AckMS, lap.State
 		out.Counts[name] = acknowledgementLapCount{lap.Started, lap.Completed, lap.NotApplicable}
 		out.ObservedExecutionMS[name] = lap.ObservedMS

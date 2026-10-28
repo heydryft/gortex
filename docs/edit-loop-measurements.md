@@ -283,8 +283,8 @@ Complete batch parser/durability lap coverage remains pending.
 `mutation_status` adds `acknowledgement`, with a bounded shared `rpc_id`, scope,
 caller response-ready and actual-handler walls/states, per-lap begin/completion
 counts, and owned duration values. Its nine fixed acknowledgement keys include
-explicitly unavailable dispatcher queue/preamble, middleware, reply preparation
-and transport boundaries. The existing fifteen-key `phases_ms`/`phase_states`
+explicitly unavailable dispatcher queue/preamble and transport boundaries.
+The existing fifteen-key `phases_ms`/`phase_states`
 shape remains: its six acknowledgement keys use the shared RPC observation
 when available; its nine patch keys retain their independent per-receipt
 evidence. `publication_phases` stays byte-for-byte the existing snapshot. Legacy
@@ -306,7 +306,21 @@ wrong checkout/incarnation returns unavailable timing rather than a different
 call's clock. Neither this envelope nor a timing snapshot enters the journal.
 
 The current additive set is only valid, complete and disjoint measured chunks
-of parse-gate, disk-call, ticket-admission and passive-wait work. A phase crossing
+of middleware, parse-gate, disk-call, ticket-admission, passive-wait and reply
+cleanup work. Middleware measures the existing bound-call observation origin
+(after source-tool classification) to the first wrapped leaf invocation. It
+includes the firewall handoff and real view/repository/mutation preparation;
+those nested costs are not added again. Reply preparation measures the leaf's
+return (including its own defers and any in-leaf encoding) to the existing actual
+handler-completion endpoint, after middleware decorators, view/repository release
+and activity cleanup. It excludes final protocol serialization/socket delivery
+and the later caller firewall return. A pre-leaf refusal has measured middleware
+and not-applicable reply preparation; an unwrapped raw invocation has neither.
+Nested facade/raw calls cannot replace the first leaf boundaries. Completed
+operation laps must lie inside the leaf, disjoint from both outer intervals;
+misplaced laps invalidate the subtotal instead of being double-counted.
+
+A phase crossing
 the frozen response boundary has only its complete execution observation and
 no acknowledgement duration. `observed_ack_subtotal_ms` sums only eligible
 chunks. `ack_unattributed_ms` is a labelled unclassified gap to the bound-call
