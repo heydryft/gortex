@@ -709,6 +709,9 @@
                 "product_expired": {
                   "type": "integer"
                 },
+                "retryable_refusals": {
+                  "type": "integer"
+                },
                 "successes": {
                   "type": "integer"
                 },
@@ -907,6 +910,9 @@
                   "type": "integer"
                 },
                 "product_expired": {
+                  "type": "integer"
+                },
+                "retryable_refusals": {
                   "type": "integer"
                 },
                 "successes": {

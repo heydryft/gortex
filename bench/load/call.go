@@ -54,8 +54,9 @@ func checkToolResult(data json.RawMessage) error {
 		return errors.New("tool returned isError without error content")
 	}
 	var body struct {
-		Code    string `json:"error_code"`
-		Message string `json:"message"`
+		Code      string `json:"error_code"`
+		Message   string `json:"message"`
+		Retryable bool   `json:"retryable"`
 	}
 	if err := json.Unmarshal(payload, &body); err != nil {
 		return err
@@ -64,7 +65,7 @@ func checkToolResult(data json.RawMessage) error {
 	if body.Code == "invalid_argument" {
 		code = -32602
 	}
-	return &rpcError{Code: code, Message: body.Code + ": " + body.Message}
+	return &rpcError{Code: code, Message: body.Code + ": " + body.Message, Retryable: body.Retryable}
 }
 
 type toolCaller interface {
@@ -74,6 +75,14 @@ type toolCaller interface {
 // Each logical call has its own product budget. The phase context may end
 // sooner; that observation is right-censored, never a product deadline.
 func callTool(ctx context.Context, client toolCaller, r request, args map[string]any, role string, agent, step, slot int, timeout time.Duration, sleep func(context.Context, time.Duration) error) (json.RawMessage, []Attempt, error) {
+	return callToolPolicy(ctx, client, r, args, role, agent, step, slot, timeout, sleep, false)
+}
+
+func callEditProbeTool(ctx context.Context, client toolCaller, r request, args map[string]any, role string, agent, step, slot int, timeout time.Duration, sleep func(context.Context, time.Duration) error) (json.RawMessage, []Attempt, error) {
+	return callToolPolicy(ctx, client, r, args, role, agent, step, slot, timeout, sleep, true)
+}
+
+func callToolPolicy(ctx context.Context, client toolCaller, r request, args map[string]any, role string, agent, step, slot int, timeout time.Duration, sleep func(context.Context, time.Duration) error, retryTyped bool) (json.RawMessage, []Attempt, error) {
 	logicalStart := time.Now()
 	productEnd := logicalStart.Add(timeout)
 	phaseEnd, phaseBounded := ctx.Deadline()
@@ -109,13 +118,15 @@ func callTool(ctx context.Context, client toolCaller, r request, args map[string
 			}
 			if remote != nil && remote.Code == -32002 {
 				a.Outcome = "busy"
+			} else if retryTyped && remote != nil && remote.Retryable {
+				a.Outcome = "retryable"
 			}
 			if callCtx.Err() != nil {
 				a.Outcome = terminalOutcome()
 			}
 		}
 		attempts = append(attempts, a)
-		if a.Outcome != "busy" {
+		if a.Outcome != "busy" && a.Outcome != "retryable" {
 			return data, attempts, err
 		}
 		if err := sleep(callCtx, busyBackoff(retry)); err != nil {

@@ -89,13 +89,14 @@ type Attempt struct {
 }
 
 type ToolMetrics struct {
-	Latency        Distribution   `json:"latency_ms"`
-	SuccessPerSec  Metric         `json:"successful_calls_per_second"`
-	Successes      int            `json:"successes"`
-	BusyRefusals   int            `json:"busy_refusals"`
-	Errors         map[string]int `json:"errors"`
-	PhaseCensored  int            `json:"phase_censored"`
-	ProductExpired int            `json:"product_expired"`
+	Latency           Distribution   `json:"latency_ms"`
+	SuccessPerSec     Metric         `json:"successful_calls_per_second"`
+	Successes         int            `json:"successes"`
+	BusyRefusals      int            `json:"busy_refusals"`
+	RetryableRefusals int            `json:"retryable_refusals,omitempty"`
+	Errors            map[string]int `json:"errors"`
+	PhaseCensored     int            `json:"phase_censored"`
+	ProductExpired    int            `json:"product_expired"`
 }
 
 type SweepEntry struct {
@@ -183,6 +184,8 @@ func summarize(attempts []Attempt, seconds float64, role string) map[string]Tool
 			latencies[a.Tool] = append(latencies[a.Tool], a.LogicalMS)
 		case "busy":
 			m.BusyRefusals++
+		case "retryable":
+			m.RetryableRefusals++
 		case "phase_censored":
 			m.PhaseCensored++
 		case "product_deadline":
