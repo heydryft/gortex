@@ -48,6 +48,19 @@ func TestCanonicalPatchRealChunksAggregateWithoutChargingInterleavedWork(t *test
 		bumpMtime(t, path, fmt.Sprintf("package p\nfunc After%02d() { After%02d() }\n", i, (i+1)%len(paths)))
 	}
 	r, s := beginRealPatchObservation(t)
+	var bookkeepingHooks []string
+	idx.incrementalCatchupHook = func(kind string, _ []string) {
+		if kind != "dataflow" && kind != "ref_facts" {
+			return
+		}
+		s.mu.Lock()
+		active := s.patchLaps.active
+		bookkeeping := s.patchLaps.laps[patchBookkeeping]
+		s.mu.Unlock()
+		require.Equal(t, 1, active, "actual follow-up work must own one disjoint interval")
+		require.Equal(t, bookkeeping.done+1, bookkeeping.begun, kind)
+		bookkeepingHooks = append(bookkeepingHooks, kind)
+	}
 	result, err := idx.incrementalWatcherPaths(root, paths, incrementalPathMode{
 		detectDeletions: true, forceExplicitFiles: true, publication: s,
 	})
@@ -63,6 +76,9 @@ func TestCanonicalPatchRealChunksAggregateWithoutChargingInterleavedWork(t *test
 	evidence := snapshot.patchLaps
 	require.NotNil(t, evidence)
 	require.False(t, evidence.invalid)
+	require.Equal(t, []string{"dataflow", "ref_facts"}, bookkeepingHooks, "the actual follow-up passes must still run once in order")
+	require.Equal(t, uint64(1), evidence.laps[patchBookkeeping].done)
+	require.Equal(t, evidence.laps[patchBookkeeping].begun, evidence.laps[patchBookkeeping].done)
 	require.GreaterOrEqual(t, evidence.laps[patchParse].done, uint64(2), "must execute actual repeated chunks")
 	require.GreaterOrEqual(t, evidence.laps[patchSearch].done, uint64(2))
 	require.GreaterOrEqual(t, evidence.laps[patchApply].done, uint64(4), "apply is split at each real search boundary")
@@ -70,6 +86,7 @@ func TestCanonicalPatchRealChunksAggregateWithoutChargingInterleavedWork(t *test
 	require.Less(t, parse.totalNS, parse.lastNS-parse.firstNS, "the first→last parse envelope includes intervening apply/search and must not be used as parse time")
 	var sum int64
 	timings := snapshot.EditTimings()
+	require.NotContains(t, timings.Milliseconds, "bookkeeping", "private evidence does not silently change the requested lap contract")
 	for i, name := range canonicalPatchLapNames {
 		v := evidence.laps[i]
 		require.Equal(t, v.begun, v.done, name)

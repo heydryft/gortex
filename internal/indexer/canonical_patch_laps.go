@@ -14,10 +14,13 @@ const (
 	patchResolve
 	patchMtimes
 	patchDerived
+	// Supplementary actual work, kept private until its additive projection is
+	// reviewed. It is not a replacement for any requested patch lap.
+	patchBookkeeping
 	canonicalPatchLapCount
 )
 
-var canonicalPatchLapNames = [canonicalPatchLapCount]string{
+var canonicalPatchLapNames = [...]string{
 	"gate_wait", "patch_parse", "apply", "search_lap", "resolve", "mtimes", "derived",
 }
 

@@ -204,6 +204,9 @@ func (idx *Indexer) runIncrementalResolutionCatchup(
 	idx.resolveWithDeferredEvidence(batch, func() { resolveFiles(files) })
 	resolve.end()
 
+	// Measure this concrete follow-up block, not a gap inferred between two
+	// resolver laps. The attempt's existing ordered collector rejects overlap.
+	bookkeeping := batch.publicationStamps().beginPatchLap(patchBookkeeping)
 	idx.observeIncrementalCatchup("dataflow", files)
 	idx.materializeDataflowParamsForFiles(files)
 
@@ -216,6 +219,7 @@ func (idx *Indexer) runIncrementalResolutionCatchup(
 	factFiles := appendUniqueSorted(files, affected.files...)
 	idx.observeIncrementalCatchup("ref_facts", factFiles)
 	idx.persistRefFactsForFiles(factFiles)
+	bookkeeping.end()
 	return factFiles
 }
 
