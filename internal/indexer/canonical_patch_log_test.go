@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -28,6 +29,7 @@ func TestCanonicalPatchLogOwnsItsSnapshotBeforeWinnerPublication(t *testing.T) {
 	fields := entries[0].ContextMap()
 	require.Equal(t, "physical_attempt_before_receipt_validation", fields["patch_lap_scope"])
 	require.Equal(t, ticket.Generation, fields["attempt_ticket"])
+	require.Eventually(t, func() bool { return record.Snapshot().attemptWindow != nil }, 2*time.Second, time.Millisecond)
 	status := record.Snapshot().EditTimings()
 	require.Equal(t, "measured", status.States["debounce"])
 	require.Equal(t, status.States["debounce"], fields["attempt_debounce_state"])

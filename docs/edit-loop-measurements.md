@@ -68,7 +68,7 @@ accepted runnable attempt, which may follow retries. These are outer execution
 events, not a pure debounce/lane/gate measurement, a full patch wall, or a split
 of nested deep phases. No deep checkout-builder phase is relabelled onto the
 contextless canonical pipeline, and internal storm/atomic batches remain outside
-this observation. The full patch wall remains unobserved;
+this observation. These executor events alone do not establish a full patch wall;
 no phase-sum or CPU attribution acceptance follows from these events.
 
 For an accepted initial canonical point attempt, `debounce` measures the actual
@@ -153,7 +153,18 @@ unmeasured and needs the prescribed no-regression runs.
   `acknowledgement` object names this scope and shared RPC identity. It is not
   the harness's send-to-receive wall. Legacy publication origin remains MCP
   middleware entry and does not move to this earlier boundary.
-- `patch_wall_ms` is null until the physical patch boundaries are recorded.
+- `patch_wall_ms` is the accepted canonical timer callback entry through actual
+  mutation return, after the existing completion, Done delivery and cohort
+  release. It excludes prior debounce/retry backoff and timing-publication
+  overhead. It may finish after the receipt terminal and caller ACK; those
+  walls are independent and must never be summed. An early snapshot can have
+  a terminal receipt but a null patch wall until physical return. A later
+  fresh immutable observation appears only for the exact still-retained
+  accepted attempt; absent recorder ownership, eviction, failure or a foreign
+  attempt leaves it unavailable. Previously returned snapshots do not change.
+  The early patch log keeps its original scope; one matching completion line
+  records the final wall and attempt retry ordinal. This endpoint evidence
+  remains partial accounting, without a complete phase partition or5% claim.
   One coalesced patch may serve multiple receipts.
 - `publication_wall_ms`, when terminal boundaries exist, measures
   `received` to `ticket_completed` or `ticket_failed`. It is a receipt interval,

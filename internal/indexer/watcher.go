@@ -1969,14 +1969,20 @@ func (w *Watcher) scheduleFileMutationWithRecord(path string, kind ChangeKind, r
 
 func (w *Watcher) armPointMutationTimerLocked(path string, kind ChangeKind, generation uint64, retryAttempt int, delay time.Duration) {
 	var timer *time.Timer
-	var debounce *canonicalDebounceWait
-	if retryAttempt == 0 && w.mutationWaiters[path][generation].publication != nil {
-		debounce = &canonicalDebounceWait{started: time.Now()}
+	var observation *canonicalPointTimer
+	if w.mutationWaiters[path][generation].publication != nil {
+		observation = &canonicalPointTimer{}
+		if retryAttempt == 0 {
+			observation.debounce.started = time.Now()
+		}
 	}
 	w.asyncWork.Add(1)
 	timer = time.AfterFunc(delay, func() {
-		if debounce != nil {
-			debounce.entered = time.Now() // callback entry excludes claim-lock/admission work
+		if observation != nil {
+			observation.entered = time.Now() // callback entry precedes claim/admission
+			if !observation.debounce.started.IsZero() {
+				observation.debounce.entered = observation.entered
+			}
 		}
 		defer w.asyncWork.Done()
 		// Timer.Stop can lose a race with a callback that is already queued.
@@ -1984,19 +1990,24 @@ func (w *Watcher) armPointMutationTimerLocked(path string, kind ChangeKind, gene
 		if !w.claimPendingTimer(path, &timer) {
 			return
 		}
-		w.runPointMutationWithDebounce(path, kind, generation, retryAttempt, debounce)
+		publication := w.runPointMutationObserved(path, kind, generation, retryAttempt, observation)
+		if publication != nil && observation != nil {
+			// The mutation returned after its existing completion and cohort-release
+			// defers. Timing publication does not move Done or resource ownership.
+			publication.finishPhysicalAttempt(observation.entered, time.Now(), retryAttempt, w.logger)
+		}
 	})
 	w.pending[path] = timer
 }
 
 func (w *Watcher) runPointMutation(path string, kind ChangeKind, generation uint64, retryAttempt int) {
-	w.runPointMutationWithDebounce(path, kind, generation, retryAttempt, nil)
+	w.runPointMutationObserved(path, kind, generation, retryAttempt, nil)
 }
 
-func (w *Watcher) runPointMutationWithDebounce(path string, kind ChangeKind, generation uint64, retryAttempt int, debounce *canonicalDebounceWait) {
-	publication := w.beginPointPublication(path, generation)
-	if publication != nil && debounce != nil {
-		publication.stamps.debounce = *debounce // immutable callback-owned pair, exact generation only
+func (w *Watcher) runPointMutationObserved(path string, kind ChangeKind, generation uint64, retryAttempt int, observation *canonicalPointTimer) (publication *pointPublicationAttempt) {
+	publication = w.beginPointPublication(path, generation)
+	if publication != nil && observation != nil {
+		publication.stamps.debounce = observation.debounce // immutable callback-owned pair, exact generation only
 	}
 	if w.pointMutationClaimed != nil {
 		w.pointMutationClaimed(path)
@@ -2086,6 +2097,7 @@ func (w *Watcher) runPointMutationWithDebounce(path string, kind ChangeKind, gen
 		patchErr = errMutationSuperseded
 		complete = false
 	}
+	return
 }
 
 func (w *Watcher) schedulePointMutationRetry(path string, kind ChangeKind, generation uint64, attempt int) bool {

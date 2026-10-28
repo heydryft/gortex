@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"weak"
 )
 
 // PublicationPhase names one step between an edit reaching the daemon and the
@@ -167,19 +168,22 @@ func DefaultPublicationPhases() *PublicationPhaseRecorder { return defaultPublic
 // PublicationPhaseRecord is one edit's (or one fresh request's) path to
 // publication.
 type PublicationPhaseRecord struct {
-	mu             sync.Mutex
-	key            string
-	checkoutID     string
-	source         string
-	ticket         uint64
-	generation     int64
-	origin         time.Time
-	marks          []publicationMark
-	terminal       bool
-	canonicalBound bool
-	patchLaps      *canonicalPatchEvidence    // immutable, exact accepted attempt only
-	laneWait       *canonicalLaneWaitEvidence // separate from executor-contained laps
-	debounce       *canonicalDebounceEvidence
+	mu              sync.Mutex
+	key             string
+	checkoutID      string
+	source          string
+	ticket          uint64
+	generation      int64
+	origin          time.Time
+	marks           []publicationMark
+	terminal        bool
+	canonicalBound  bool
+	patchLaps       *canonicalPatchEvidence    // immutable, exact accepted attempt only
+	laneWait        *canonicalLaneWaitEvidence // separate from executor-contained laps
+	debounce        *canonicalDebounceEvidence
+	owner           weak.Pointer[PublicationPhaseRecorder] // membership only; never retains an expired recorder
+	acceptedAttempt *PublicationStamps                     // private exact winner witness, cleared on completion
+	attemptWindow   *canonicalAttemptWindow
 }
 
 type publicationMark struct {
@@ -204,7 +208,7 @@ func (r *PublicationPhaseRecorder) Begin(checkoutID, key, source string, origin 
 		return existing
 	}
 	record := &PublicationPhaseRecord{
-		key: key, checkoutID: checkoutID, source: source, origin: origin,
+		key: key, checkoutID: checkoutID, source: source, origin: origin, owner: weak.Make(r),
 		marks: []publicationMark{{phase: PublicationReceived, at: origin}},
 	}
 	if _, known := r.byCheckout[checkoutID]; !known && len(r.byCheckout) >= r.checkouts {
@@ -459,6 +463,7 @@ type PublicationPhaseSnapshot struct {
 	patchLaps         *canonicalPatchEvidence  // private; legacy timeline wire stays unchanged
 	laneWait          *canonicalLaneWaitEvidence
 	debounce          *canonicalDebounceEvidence
+	attemptWindow     *canonicalAttemptWindow
 }
 
 // Snapshot renders the record.
@@ -478,6 +483,7 @@ func (p *PublicationPhaseRecord) Snapshot() PublicationPhaseSnapshot {
 		patchLaps:         p.patchLaps,
 		laneWait:          p.laneWait,
 		debounce:          p.debounce,
+		attemptWindow:     p.attemptWindow,
 	}
 	for _, mark := range p.marks {
 		offset := mark.at.Sub(p.origin)
@@ -618,5 +624,6 @@ func (p *PublicationPhaseRecord) Absorb(stamps *PublicationStamps) {
 		p.patchLaps = patch
 		p.laneWait = lane
 		p.debounce = debounce
+		p.acceptedAttempt = stamps
 	}
 }

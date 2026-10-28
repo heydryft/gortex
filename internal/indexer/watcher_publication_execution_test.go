@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,7 +31,9 @@ func pointPublicationFixture(t *testing.T) (string, *Indexer, *Watcher) {
 
 func newPointPublication(t *testing.T, name string) *PublicationPhaseRecord {
 	t.Helper()
-	return NewPublicationPhaseRecorder(1, 1).Begin("", name, PublicationSourceMCPEdit, time.Now())
+	recorder := NewPublicationPhaseRecorder(1, 1)
+	t.Cleanup(func() { runtime.KeepAlive(recorder) })
+	return recorder.Begin("", name, PublicationSourceMCPEdit, time.Now())
 }
 
 func requirePointExecution(t *testing.T, record *PublicationPhaseRecord, want bool) {
@@ -56,6 +59,7 @@ func requirePointExecution(t *testing.T, record *PublicationPhaseRecord, want bo
 	} else {
 		require.Nil(t, record.Snapshot().laneWait, "rejected/shared attempts must not borrow the winner's lane wait")
 		require.Nil(t, record.Snapshot().debounce, "rejected/shared attempts must not borrow the winner's quiet timer")
+		require.Nil(t, record.Snapshot().attemptWindow, "rejected/shared attempts must not publish the winner's physical window")
 		require.Nil(t, record.Snapshot().patchLaps, "rejected attempts must not transfer any scalar evidence")
 	}
 }
@@ -185,6 +189,9 @@ func TestCanonicalPublicationDiscardsRetryAttemptSpans(t *testing.T) {
 	require.EqualValues(t, 2, calls.Load())
 	require.Nil(t, record.Snapshot().debounce, "winning retry backoff is not the initial debounce and cannot borrow the failed attempt's pair")
 	require.Equal(t, "not_observed", record.Snapshot().EditTimings().States["debounce"])
+	require.Eventually(t, func() bool { return record.Snapshot().attemptWindow != nil }, 2*time.Second, time.Millisecond)
+	require.Equal(t, 1, record.Snapshot().attemptWindow.retry)
+	require.GreaterOrEqual(t, record.Snapshot().attemptWindow.startNS, firstFailed.Sub(origin).Nanoseconds(), "physical wall belongs only to the winning retry")
 	require.GreaterOrEqual(t, phaseOffsets(record.Snapshot())[PublicationPatchExecutionStarted], firstFailed.Sub(origin).Nanoseconds())
 	require.GreaterOrEqual(t, record.Snapshot().laneWait.startNS, firstFailed.Sub(origin).Nanoseconds(), "retry must retain only the winning attempt's wait")
 }

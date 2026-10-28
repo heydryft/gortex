@@ -38,7 +38,7 @@ func TestCanonicalDebounceObservesInitialTimerBeforeClaimedHook(t *testing.T) {
 	timing := snapshot.EditTimings()
 	require.Equal(t, "measured", timing.States["debounce"])
 	require.NotNil(t, timing.Milliseconds["debounce"])
-	require.Nil(t, timing.Window.PatchWallMS, "quiet wait is not a complete physical-attempt wall")
+	require.Equal(t, "partial", timing.Window.Coverage, "quiet wait and the separate physical wall do not close accounting")
 }
 
 func TestCanonicalDebounceRequiresActualContainedPair(t *testing.T) {

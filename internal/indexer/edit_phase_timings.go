@@ -59,6 +59,11 @@ func (s PublicationPhaseSnapshot) EditTimings() EditPhaseTimings {
 		return out
 	}
 	out.Window.Clock = s.Clock
+	if s.attemptWindow != nil {
+		// P is independent of receipt/ACK lifetime and may finish later.
+		ms := float64(s.attemptWindow.endNS-s.attemptWindow.startNS) / 1e6
+		out.Window.PatchWallMS = &ms
+	}
 	offsets := make(map[PublicationPhase]int64, len(s.Phases))
 	for _, phase := range s.Phases {
 		offsets[phase.Phase] = phase.OffsetNS
