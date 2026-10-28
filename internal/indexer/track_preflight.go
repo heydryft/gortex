@@ -20,7 +20,7 @@ func (mi *MultiIndexer) configuredTrackEntry(ctx context.Context, root string, b
 	}
 	budget, cancel := context.WithDeadline(ctx, before)
 	defer cancel()
-	facts, err := mi.prefixStats.naming(budget, root)
+	facts, err := mi.prefixStats.canonical(budget, root)
 	if err != nil {
 		return nil, trackNamingFailure(ctx, err)
 	}

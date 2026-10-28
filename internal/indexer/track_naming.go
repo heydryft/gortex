@@ -31,7 +31,7 @@ func trackNamingFailure(ctx context.Context, err error) error {
 	return err
 }
 
-func readTrackNaming(ctx context.Context, root string) trackNamingFacts {
+func readTrackCanonical(_ context.Context, root string) trackNamingFacts {
 	canonical, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return trackNamingFacts{err: err}
@@ -43,7 +43,14 @@ func readTrackNaming(ctx context.Context, root string) trackNamingFacts {
 	if !info.IsDir() {
 		return trackNamingFacts{err: fmt.Errorf("invalid path: %s (not a directory)", root)}
 	}
-	facts := trackNamingFacts{canonical: canonical}
+	return trackNamingFacts{canonical: canonical}
+}
+
+func readTrackNaming(ctx context.Context, root string) trackNamingFacts {
+	facts := readTrackCanonical(ctx, root)
+	if facts.err != nil {
+		return facts
+	}
 	facts.workspace, facts.parseErr = config.ParseWorkspaceFile(filepath.Join(root, ".gortex.yaml"))
 	// Non-git directories retain basename naming, as ordinary track does.
 	facts.inventory, _ = gitstate.Inventory(ctx, root)
@@ -54,6 +61,16 @@ func readTrackNaming(ctx context.Context, root string) trackNamingFacts {
 }
 
 func (a *prefixStatAllowance) naming(ctx context.Context, root string) (trackNamingFacts, error) {
+	return a.observeNaming(ctx, root, readTrackNaming)
+}
+
+func (a *prefixStatAllowance) canonical(ctx context.Context, root string) (trackNamingFacts, error) {
+	return a.observeNaming(ctx, root, readTrackCanonical)
+}
+
+// The two fixed discovery operations share the existing identity allowance.
+// Canonical membership lookup must not parse workspace configuration or run git.
+func (a *prefixStatAllowance) observeNaming(ctx context.Context, root string, read func(context.Context, string) trackNamingFacts) (trackNamingFacts, error) {
 	if err := ctx.Err(); err != nil {
 		return trackNamingFacts{}, err
 	}
@@ -70,7 +87,7 @@ func (a *prefixStatAllowance) naming(ctx context.Context, root string) (trackNam
 	defer cancel()
 	go func() {
 		defer func() { <-slots }()
-		done <- readTrackNaming(workerCtx, root)
+		done <- read(workerCtx, root)
 	}()
 	select {
 	case <-ctx.Done():
