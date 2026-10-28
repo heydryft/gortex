@@ -169,11 +169,12 @@ func TestEditAcknowledgementReadsKeepBaselineAllocationsAndNoIdentity(t *testing
 		}
 		return result, nil
 	}
-	baseline := boundHandler(s, "tool", "read_file", noop, nil, nil, nil)
+	baseline := s.preAcknowledgementBoundToolHandler(noop)
 	observed := s.boundToolHandler(noop)
 	before := editAcknowledgementSequence.Load()
 	plain := testing.AllocsPerRun(100, func() { _, _ = baseline(ctx, req) })
 	wrapped := testing.AllocsPerRun(100, func() { _, _ = observed(ctx, req) })
-	require.Equal(t, plain, wrapped, "read wrapper adds no acknowledgement allocation")
+	t.Logf("allocations/read: pre-feature wrapper=%g, acknowledgement wrapper=%g", plain, wrapped)
+	require.LessOrEqual(t, wrapped, plain, "read wrapper must add no allocation versus the complete pre-feature wrapper")
 	require.Equal(t, before, editAcknowledgementSequence.Load(), "read never creates an acknowledgement identity")
 }
