@@ -188,3 +188,30 @@ func TestStatusCarriesStorageAndBuildLaneWhileBusy(t *testing.T) {
 	assert.Equal(t, "checkout-3", st.BuildLane.Holder.CheckoutID)
 	assert.Nil(t, st.Views, "the holder's identity is its own block, never the views census")
 }
+
+func TestStatusWALObservationCausesAndNullablePeak(t *testing.T) {
+	for _, observed := range []bool{false, true} {
+		snapshot := store_sqlite.WALReclaimStats{
+			CancelledWriterParked: 3, CancelledWriteIntent: 2, CancelledOther: 1,
+			WALPeakObserved: observed,
+		}
+		got := walReclaimStatus(snapshot)
+		require.EqualValues(t, 3, got.CancelledWriterParked)
+		require.EqualValues(t, 2, got.CancelledWriteIntent)
+		require.EqualValues(t, 1, got.CancelledOther)
+		require.Equal(t, observed, got.WALPeakObserved)
+		encoded, err := json.Marshal(got)
+		require.NoError(t, err)
+		var wire map[string]any
+		require.NoError(t, json.Unmarshal(encoded, &wire))
+		require.Contains(t, wire, "observed_peak_wal_bytes")
+		if observed {
+			require.NotNil(t, got.ObservedPeakWALBytes)
+			require.Zero(t, *got.ObservedPeakWALBytes)
+			require.Equal(t, float64(0), wire["observed_peak_wal_bytes"])
+		} else {
+			require.Nil(t, got.ObservedPeakWALBytes)
+			require.Nil(t, wire["observed_peak_wal_bytes"])
+		}
+	}
+}

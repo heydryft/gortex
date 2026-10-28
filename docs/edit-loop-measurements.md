@@ -177,8 +177,38 @@ It reuses existing successful size reads and adds no file/stat/SQL work to edits
 Generation handles share the same peak; independent stores do not. Truncate,
 shrink and status reads never reset it. This is a lower bound on instantaneous
 physical peak and cannot be subtracted into a warm-run peak after startup.
-Daemon/MCP transport wiring and CPU/edit denominator coverage remain separate
-pending work; these store observations do not establish those acceptance gates.
+These store observations do not by themselves establish per-run peak or
+cancellation/CPU attribution acceptance.
+
+`graph_stats` and `gortex://stats` share a `wal_reclaim_observation` block. Its
+scope is `physical_store_since_open`, independent of the selected graph/view or
+repository. The optional store capability is queried once per payload through
+its existing `WALReclaimStats` snapshot: a short counter mutex and atomic loads,
+with no file stat, WAL-index read, SQL query or writer wait. Unsupported/masked
+stores report `snapshot_available=false`, a reason and null counters/peak;
+there is no unwrap or SQL fallback. A supported zero counter is numeric zero.
+
+The fields `cancelled_writer_parked`, `cancelled_write_intent` and
+`cancelled_other` preserve the store's final-attempt observation semantics.
+`observed_peak_wal_bytes` is null while `wal_peak_observed=false`. An actually
+observed empty WAL is `0` with `wal_peak_observed=true`; it is different from
+missing evidence. `peak_scope=sampled_since_store_open_lower_bound` explicitly
+excludes an exact instantaneous or warm-run peak. In-memory stores have no WAL
+size observation even when their counter snapshot is supported.
+
+`observation_epoch` reuses the Server's immutable observation binding and
+`epoch_scope=server_binding`. It is **not** a durable store-open identity or a
+per-run reset token. Production binds the Server's physical store at construction;
+generation handles share the store core and its observations. A literal Server
+without that binding has an empty epoch. Do not join samples across a changed
+binding/reopen, or subtract two high-water marks into a run peak. Stats reads,
+WAL resets and generation changes never clear these counters.
+
+Daemon status JSON also exposes these new causes and nullable peak under
+`storage.wal_reclaim`, extending its already-collected snapshot. This adds no
+status collection call or I/O; the new MCP block does not call the daemon's
+file-size/WAL-index collection path. Other daemon storage/status fields keep
+their existing semantics.
 
 ## Logical source-operation witness (transport pending)
 
