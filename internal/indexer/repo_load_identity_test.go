@@ -3,6 +3,7 @@ package indexer
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"testing"
 
@@ -31,6 +32,9 @@ func TestRepoIdentityColdAliasPublication(t *testing.T) {
 }
 
 func TestRepoIdentityDarwinTmpAliasPublication(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("requires Darwin's /tmp -> /private/tmp alias")
+	}
 	canonical, err := filepath.EvalSymlinks("/tmp")
 	require.NoError(t, err)
 	if canonical != "/private/tmp" {
