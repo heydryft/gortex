@@ -98,9 +98,20 @@ Canonical point execution additionally collects `cycle_started`,
 Only the exact successful winner at the existing guarded completion can absorb
 those stamps, outside the watcher lock and before result delivery. Older
 coalesced receipts receive completion without the winner's execution spans.
-Retry, superseded and stopped attempts discard their collectors; native or
-uninstrumented paths allocate no collector. Outstanding waiter ownership is
+Retry, superseded and stopped attempts discard their collectors; native paths
+without an instrumented outstanding waiter allocate no collector. Outstanding waiter ownership is
 released by the existing completion/stop paths rather than a tracing registry.
+
+When a native successor serves instrumented predecessors, status may additionally
+expose `coalesced_publication`: a separate bounded recorder entry for that actual
+physical winner, with explicit requested and applied generations. The original
+receipt's accepted-P fields remain unavailable. Each actually served retained
+predecessor may refer to the same winner; these are references to shared work,
+not additive per-edit spans. The winner uses its own callback-entry origin and
+actual return endpoint. Native quiet wait is not observed, and
+`background_coverage` remains `not_established`. Eviction, absent ownership,
+failure or supersession leaves this independent evidence unavailable; weak links
+cannot retain evicted entries or rebind a previously served receipt.
 
 The execution pair surrounds the common point executor, including its actual
 standalone or MultiWatcher parse/apply/resolve/derived implementation. It excludes

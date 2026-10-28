@@ -10,23 +10,39 @@ import (
 // a receipt. The guarded existing waiter completion accepts only its exact
 // winning record, outside the watcher lock and before Done delivery.
 type pointPublicationAttempt struct {
-	record *PublicationPhaseRecord
-	stamps *PublicationStamps
+	record      *PublicationPhaseRecord
+	stamps      *PublicationStamps
+	independent bool
 }
 
 func (w *Watcher) beginPointPublication(path string, generation uint64) *pointPublicationAttempt {
+	return w.beginPointPublicationObserved(path, generation, 0, nil)
+}
+
+func (w *Watcher) beginPointPublicationObserved(path string, generation uint64, retry int, observation *canonicalPointTimer) *pointPublicationAttempt {
 	w.mu.Lock()
 	var record *PublicationPhaseRecord
+	var predecessor *PublicationPhaseRecord
 	if !w.stopping && w.pendingGeneration[path] == generation {
 		record = w.mutationWaiters[path][generation].publication
+		if record == nil && observation != nil {
+			if requested := w.observedMutationGeneration[path]; requested != 0 && requested < generation {
+				predecessor = w.mutationWaiters[path][requested].publication
+			}
+		}
 	}
 	w.mu.Unlock()
+	independent := false
+	if record == nil && predecessor != nil {
+		record = predecessor.beginCoalescedAttempt(generation, retry, observation.entered)
+		independent = record != nil
+	}
 	if record == nil {
 		return nil // no tracing allocations on native/uninstrumented paths
 	}
 	stamps := record.newCanonicalPatchStamps()
 	stamps.markAt(PublicationCycleStarted, time.Now())
-	return &pointPublicationAttempt{record: record, stamps: stamps}
+	return &pointPublicationAttempt{record: record, stamps: stamps, independent: independent}
 }
 
 func (p *pointPublicationAttempt) withContext(ctx context.Context) context.Context {

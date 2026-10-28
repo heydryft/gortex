@@ -31,7 +31,9 @@ func pointPublicationFixture(t *testing.T) (string, *Indexer, *Watcher) {
 
 func newPointPublication(t *testing.T, name string) *PublicationPhaseRecord {
 	t.Helper()
-	recorder := NewPublicationPhaseRecorder(1, 1)
+	// Keep room for the separately owned physical successor. Eviction refusal
+	// has its own bounded-recorder control below.
+	recorder := NewPublicationPhaseRecorder(2, 1)
 	t.Cleanup(func() { runtime.KeepAlive(recorder) })
 	return recorder.Begin("", name, PublicationSourceMCPEdit, time.Now())
 }
@@ -157,6 +159,18 @@ func TestCanonicalPublicationCommitsOnlyGuardedWinningAttempt(t *testing.T) {
 			requirePointExecution(t, older, false)
 			requirePointExecution(t, newer, !nativeSuccessor)
 			require.Equal(t, first.Generation, older.Snapshot().Ticket)
+			if nativeSuccessor {
+				require.Eventually(t, func() bool {
+					winner := older.CoalescedPublication()
+					return winner != nil && winner.Timings.Window.PatchWallMS != nil
+				}, 5*time.Second, time.Millisecond)
+				winner := older.CoalescedPublication()
+				require.Equal(t, first.Generation, winner.RequestedGeneration)
+				require.Equal(t, second.Generation, winner.AppliedGeneration)
+				require.NotEqual(t, older.Key(), winner.Publication.Key)
+				require.Nil(t, winner.Timings.Milliseconds["debounce"])
+				require.Equal(t, "not_established", winner.BackgroundCoverage)
+			}
 		})
 	}
 }
@@ -299,4 +313,108 @@ func TestCanonicalPublicationBypassedDerivedTailRemainsUnobserved(t *testing.T) 
 	timing := record.Snapshot().EditTimings()
 	require.Nil(t, timing.Milliseconds["derived"])
 	require.Equal(t, "not_observed", timing.States["derived"])
+}
+
+func TestCanonicalNativeWinnerServesMultipleObservedPredecessors(t *testing.T) {
+	path, _, w := pointPublicationFixture(t)
+	w.config.DebounceMs = int(time.Hour / time.Millisecond)
+	recorder := NewPublicationPhaseRecorder(8, 1)
+	t.Cleanup(func() { runtime.KeepAlive(recorder) })
+	records := []*PublicationPhaseRecord{
+		recorder.Begin("", "first", PublicationSourceMCPEdit, time.Now()),
+		recorder.Begin("", "second", PublicationSourceMCPEdit, time.Now()),
+	}
+	var tickets []*MutationTicket
+	for _, record := range records {
+		ticket, err := w.EnqueueFileMutation(WithPublicationRecord(t.Context(), record), path)
+		require.NoError(t, err)
+		tickets = append(tickets, ticket)
+	}
+	native := w.scheduleFileMutation(path, ChangeModified)
+	require.NotNil(t, native)
+	w.mu.Lock()
+	w.pending[path].Reset(time.Millisecond)
+	w.mu.Unlock()
+	for _, ticket := range append(tickets, native) {
+		result := awaitMutationRetryResult(t, ticket)
+		require.NoError(t, result.Err)
+		require.Equal(t, native.Generation, result.AppliedGeneration)
+	}
+	for i, record := range records {
+		requirePointExecution(t, record, false)
+		require.Eventually(t, func() bool {
+			winner := record.CoalescedPublication()
+			return winner != nil && winner.Timings.Window.PatchWallMS != nil
+		}, 5*time.Second, time.Millisecond)
+		winner := record.CoalescedPublication()
+		require.Equal(t, tickets[i].Generation, winner.RequestedGeneration)
+		require.Equal(t, native.Generation, winner.AppliedGeneration)
+		require.Nil(t, winner.Timings.Milliseconds["debounce"])
+	}
+	require.Equal(t, records[0].CoalescedPublication().Publication.Key, records[1].CoalescedPublication().Publication.Key)
+	// Neither a retained edit nor its weak link can resurrect an evicted winner.
+	for i := 0; i < 8; i++ {
+		recorder.Begin("", fmt.Sprintf("replacement-%d", i), PublicationSourceMCPEdit, time.Now())
+	}
+	for _, record := range records {
+		require.Nil(t, record.CoalescedPublication())
+	}
+}
+
+func TestCoalescedAttemptRequiresRetainedOwnerAndOneShotLink(t *testing.T) {
+	origin := time.Now()
+	recorder := NewPublicationPhaseRecorder(4, 1)
+	record := recorder.Begin("", "edit", PublicationSourceMCPEdit, origin)
+	require.True(t, record.bindCanonicalTicket(1, origin))
+	winner := record.beginCoalescedAttempt(2, 0, origin.Add(time.Millisecond))
+	require.NotNil(t, winner)
+	require.Nil(t, record.beginCoalescedAttempt(2, 0, origin.Add(2*time.Millisecond)), "wall-clock readings cannot rebind a callback identity")
+	// Admission alone cannot manufacture a serving relationship.
+	record.linkCoalescedWinner(winner, 1, 2)
+	require.Nil(t, record.CoalescedPublication())
+	stamps := winner.newCanonicalPatchStamps()
+	winner.Absorb(stamps)
+	record.linkCoalescedWinner(winner, 1, 2)
+	linked := record.CoalescedPublication()
+	require.NotNil(t, linked)
+	require.Nil(t, linked.Timings.Window.PatchWallMS, "unfinished physical work remains unavailable")
+	other := record.beginCoalescedAttempt(3, 0, origin.Add(2*time.Millisecond))
+	require.NotNil(t, other)
+	other.Absorb(other.newCanonicalPatchStamps())
+	record.linkCoalescedWinner(other, 1, 3)
+	require.Equal(t, uint64(2), record.CoalescedPublication().AppliedGeneration, "a served ticket cannot be rebound")
+	require.Equal(t, uint64(2), linked.AppliedGeneration, "earlier returned values stay immutable")
+	// A retained pointer to an evicted record cannot create another attempt.
+	for i := 0; i < 4; i++ {
+		recorder.Begin("", fmt.Sprintf("evict-%d", i), PublicationSourceMCPEdit, origin)
+	}
+	require.Nil(t, record.beginCoalescedAttempt(4, 0, origin.Add(3*time.Millisecond)))
+	require.Nil(t, record.CoalescedPublication())
+	absent := &PublicationPhaseRecord{}
+	require.Nil(t, absent.beginCoalescedAttempt(1, 0, origin))
+	require.Nil(t, absent.CoalescedPublication())
+	runtime.KeepAlive(recorder)
+}
+
+func TestCanonicalObservationIndexFollowsOutstandingWaiters(t *testing.T) {
+	w := newMutationRetryTestWatcher(t)
+	w.config.DebounceMs = int(time.Hour / time.Millisecond)
+	for i := 0; i < 100; i++ {
+		w.scheduleFileMutation(fmt.Sprintf("native-%d.go", i), ChangeModified)
+	}
+	require.Nil(t, w.observedMutationGeneration, "native storms do not allocate observation metadata")
+	record := newPointPublication(t, "indexed")
+	observed := w.scheduleFileMutationWithRecord("edit.go", ChangeModified, record)
+	require.Equal(t, observed.Generation, w.observedMutationGeneration["edit.go"])
+	native := w.scheduleFileMutation("edit.go", ChangeModified)
+	require.Equal(t, observed.Generation, w.observedMutationGeneration["edit.go"], "native admission never rebinds the observed owner")
+	require.True(t, w.completeMutationWaitersIfCurrent("edit.go", native.Generation, nil))
+	require.Empty(t, w.observedMutationGeneration)
+	require.NoError(t, awaitMutationRetryResult(t, observed).Err)
+	require.NoError(t, awaitMutationRetryResult(t, native).Err)
+	other := w.scheduleFileMutationWithRecord("other.go", ChangeModified, newPointPublication(t, "stopped-index"))
+	require.NotEmpty(t, w.observedMutationGeneration)
+	w.failMutationWaiters(errWatcherStopped)
+	require.Nil(t, w.observedMutationGeneration)
+	require.ErrorIs(t, awaitMutationRetryResult(t, other).Err, errWatcherStopped)
 }

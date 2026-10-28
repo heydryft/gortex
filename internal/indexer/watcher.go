@@ -173,19 +173,20 @@ type Watcher struct {
 	excludes           *excludes.Matcher
 	// currentExcludePatterns is installed by MultiWatcher for its configured
 	// repository. ConfigManager returns immutable, shared policy snapshots.
-	currentExcludePatterns func() []string
-	currentIncludePatterns func() []string
-	excludePolicyIncludes  []string
-	excludePolicyMu        sync.Mutex
-	excludePolicyPatterns  []string
-	excludePolicyMatcher   *excludes.Matcher
-	events                 chan GraphChangeEvent
-	history                []GraphChangeEvent
-	historyMu              sync.Mutex
-	pending                map[string]*time.Timer
-	pendingGeneration      map[string]uint64
-	mutationWaiters        map[string]map[uint64]mutationWaiter
-	nextGeneration         uint64
+	currentExcludePatterns     func() []string
+	currentIncludePatterns     func() []string
+	excludePolicyIncludes      []string
+	excludePolicyMu            sync.Mutex
+	excludePolicyPatterns      []string
+	excludePolicyMatcher       *excludes.Matcher
+	events                     chan GraphChangeEvent
+	history                    []GraphChangeEvent
+	historyMu                  sync.Mutex
+	pending                    map[string]*time.Timer
+	pendingGeneration          map[string]uint64
+	mutationWaiters            map[string]map[uint64]mutationWaiter
+	observedMutationGeneration map[string]uint64 // lazy index into outstanding waiters, not timing history
+	nextGeneration             uint64
 	// mutationRetryDelayFn and pointMutationPatch are deterministic test seams.
 	// Production retries use mutationRetryBackoff and the complete point pipeline.
 	mutationRetryDelayFn   func(int) time.Duration
@@ -1960,6 +1961,10 @@ func (w *Watcher) scheduleFileMutationWithRecord(path string, kind ChangeKind, r
 	ticket := &MutationTicket{Path: path, Generation: generation, Done: done}
 	if record != nil && record.bindCanonicalTicket(generation, time.Now()) {
 		ticket.PublicationRecord = record
+		if w.observedMutationGeneration == nil {
+			w.observedMutationGeneration = make(map[string]uint64)
+		}
+		w.observedMutationGeneration[path] = generation
 	}
 	w.mutationWaiters[path][generation] = mutationWaiter{done: done, publication: ticket.PublicationRecord}
 	w.armPointMutationTimerLocked(path, kind, generation, 0, time.Duration(w.config.DebounceMs)*time.Millisecond)
@@ -1975,6 +1980,10 @@ func (w *Watcher) armPointMutationTimerLocked(path string, kind ChangeKind, gene
 		if retryAttempt == 0 {
 			observation.debounce.started = time.Now()
 		}
+	} else if requested := w.observedMutationGeneration[path]; requested != 0 && requested < generation {
+		// Observe this callback, not the predecessor's quiet wait. Native storm
+		// waiters do not require a scan to establish that no observer exists.
+		observation = &canonicalPointTimer{}
 	}
 	w.asyncWork.Add(1)
 	timer = time.AfterFunc(delay, func() {
@@ -2005,7 +2014,7 @@ func (w *Watcher) runPointMutation(path string, kind ChangeKind, generation uint
 }
 
 func (w *Watcher) runPointMutationObserved(path string, kind ChangeKind, generation uint64, retryAttempt int, observation *canonicalPointTimer) (publication *pointPublicationAttempt) {
-	publication = w.beginPointPublication(path, generation)
+	publication = w.beginPointPublicationObserved(path, generation, retryAttempt, observation)
 	if publication != nil && observation != nil {
 		publication.stamps.debounce = observation.debounce // immutable callback-owned pair, exact generation only
 		publication.stamps.startAttemptControl(observation.entered)
@@ -2150,8 +2159,9 @@ func (w *Watcher) completeMutationWaitersObserved(
 	publication *pointPublicationAttempt,
 ) bool {
 	type completion struct {
-		requested uint64
-		done      chan MutationResult
+		requested   uint64
+		done        chan MutationResult
+		publication *PublicationPhaseRecord
 	}
 	// One choke point for every completion arm, present and future: a mutation
 	// that reports an error never publishes a derived-fan-out verdict. Reindexed
@@ -2166,6 +2176,10 @@ func (w *Watcher) completeMutationWaitersObserved(
 		w.mu.Unlock()
 		return false
 	}
+	_, hasAppliedWaiter := w.mutationWaiters[path][appliedGeneration]
+	// The successful executor's finishGeneration may already have removed the
+	// pending ordinal. Its exact waiter must still exist, with no newer owner.
+	currentIndependent := hasAppliedWaiter && w.pendingGeneration[path] <= appliedGeneration
 	if requireCurrent && w.pendingGeneration[path] == appliedGeneration {
 		delete(w.pendingGeneration, path)
 	}
@@ -2176,16 +2190,29 @@ func (w *Watcher) completeMutationWaitersObserved(
 			if publication != nil && err == nil && !w.stopping && generation == appliedGeneration && waiter.publication == publication.record {
 				accepted = waiter.publication
 			}
-			completions = append(completions, completion{requested: generation, done: waiter.done})
+			if publication != nil && publication.independent && err == nil && !w.stopping &&
+				generation < appliedGeneration && waiter.publication != nil && currentIndependent {
+				accepted = publication.record
+			}
+			completions = append(completions, completion{requested: generation, done: waiter.done, publication: waiter.publication})
 			delete(w.mutationWaiters[path], generation)
 		}
 	}
 	if len(w.mutationWaiters[path]) == 0 {
 		delete(w.mutationWaiters, path)
 	}
+	if w.observedMutationGeneration[path] <= appliedGeneration {
+		delete(w.observedMutationGeneration, path)
+	}
 	w.mu.Unlock()
 	if accepted != nil {
 		accepted.Absorb(publication.stamps)
+		if publication.independent {
+			accepted.Mark(PublicationTicketCompleted)
+			for _, completion := range completions {
+				completion.publication.linkCoalescedWinner(accepted, completion.requested, appliedGeneration)
+			}
+		}
 	}
 
 	for _, completion := range completions {
@@ -2205,6 +2232,7 @@ func (w *Watcher) failMutationWaiters(err error) {
 	w.mu.Lock()
 	waiters := w.mutationWaiters
 	w.mutationWaiters = nil
+	w.observedMutationGeneration = nil
 	w.mu.Unlock()
 	for _, byGeneration := range waiters {
 		for generation, waiter := range byGeneration {
@@ -2540,6 +2568,9 @@ func (w *Watcher) completeStormMutationWaiters(
 		}
 		if len(w.mutationWaiters[path]) == 0 {
 			delete(w.mutationWaiters, path)
+		}
+		if w.observedMutationGeneration[path] <= appliedGeneration {
+			delete(w.observedMutationGeneration, path)
 		}
 	}
 	w.mu.Unlock()

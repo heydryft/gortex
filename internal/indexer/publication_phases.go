@@ -185,6 +185,8 @@ type PublicationPhaseRecord struct {
 	acceptedAttempt *PublicationStamps                     // private exact winner witness, cleared on completion
 	attemptWindow   *canonicalAttemptWindow
 	admissions      *canonicalAdmissionEvidence
+	coalescedWinner weak.Pointer[PublicationPhaseRecord] // identity only; never retains an evicted attempt
+	coalescedLinked bool
 }
 
 type publicationMark struct {
@@ -205,6 +207,10 @@ func (r *PublicationPhaseRecorder) Begin(checkoutID, key, source string, origin 
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.beginLocked(checkoutID, key, source, origin)
+}
+
+func (r *PublicationPhaseRecorder) beginLocked(checkoutID, key, source string, origin time.Time) *PublicationPhaseRecord {
 	if existing, ok := r.byKey[key]; ok {
 		return existing
 	}
