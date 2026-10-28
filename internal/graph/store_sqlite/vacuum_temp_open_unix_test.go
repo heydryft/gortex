@@ -25,6 +25,12 @@ import (
 // API exposes the generated filename before that unlink, on Unix. No driver
 // struct offsets or production hooks are added. Other OSes retain the portable
 // FILE/MEMORY policy tests; this is actual Unix file-placement evidence only.
+// _sqlite3RunVacuum copies the main schema cache_size into vacuum_db;
+// _sqlite3PagerOpen delays opening a temporary file until its first OsWrite.
+// Our real policy is 32MiB, so the fixture must exceed that cache to prove
+// actual FILE spill rather than accepting a successful entirely cached copy.
+const vacuumTempFixtureRows = 16384 // 64MiB payload at the production cache policy
+
 var vacuumOpenTestMu sync.Mutex
 var vacuumOpenOriginal atomic.Uintptr
 var vacuumOpenObservation atomic.Pointer[vacuumOpenProbe]
@@ -76,9 +82,9 @@ func TestVacuumPhysicallyOpensTempOnStoreVolume(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "physical.sqlite"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
-	_, err = s.writerDB.Exec(`CREATE TABLE vacuum_fixture (id INTEGER PRIMARY KEY, payload BLOB);
-		WITH RECURSIVE ids(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM ids WHERE n<2048)
-		INSERT INTO vacuum_fixture SELECT n, randomblob(4096) FROM ids`)
+	_, err = s.writerDB.Exec(fmt.Sprintf(`CREATE TABLE vacuum_fixture (id INTEGER PRIMARY KEY, payload BLOB);
+		WITH RECURSIVE ids(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM ids WHERE n<%d)
+		INSERT INTO vacuum_fixture SELECT n, randomblob(4096) FROM ids`, vacuumTempFixtureRows))
 	require.NoError(t, err)
 	directory, err := filepath.EvalSymlinks(filepath.Dir(s.Path()))
 	require.NoError(t, err)
@@ -98,7 +104,7 @@ func TestVacuumPhysicallyOpensTempOnStoreVolume(t *testing.T) {
 	}
 	var count int
 	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM vacuum_fixture`).Scan(&count))
-	require.Equal(t, 2048, count)
+	require.Equal(t, vacuumTempFixtureRows, count)
 }
 
 // SQLite's native VFS open signature is documented in the pinned generated
@@ -145,9 +151,9 @@ func TestCompactContextInterruptsInFlightVacuumAndRestoresDirectory(t *testing.T
 	s, err := Open(path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
-	_, err = s.writerDB.Exec(`CREATE TABLE vacuum_fixture (id INTEGER PRIMARY KEY, payload BLOB);
-		WITH RECURSIVE ids(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM ids WHERE n<2048)
-		INSERT INTO vacuum_fixture SELECT n, randomblob(4096) FROM ids`)
+	_, err = s.writerDB.Exec(fmt.Sprintf(`CREATE TABLE vacuum_fixture (id INTEGER PRIMARY KEY, payload BLOB);
+		WITH RECURSIVE ids(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM ids WHERE n<%d)
+		INSERT INTO vacuum_fixture SELECT n, randomblob(4096) FROM ids`, vacuumTempFixtureRows))
 	require.NoError(t, err)
 	require.NoError(t, s.CheckpointWAL())
 	var firstPayload string
@@ -201,8 +207,8 @@ func TestCompactContextInterruptsInFlightVacuumAndRestoresDirectory(t *testing.T
 	require.NoError(t, reopened.db.QueryRow(`PRAGMA quick_check`).Scan(&check))
 	require.Equal(t, "ok", check)
 	require.NoError(t, reopened.db.QueryRow(`SELECT count(*), sum(length(payload)) FROM vacuum_fixture`).Scan(&count, &bytes))
-	require.Equal(t, 2048, count)
-	require.Equal(t, 2048*4096, bytes)
+	require.Equal(t, vacuumTempFixtureRows, count)
+	require.Equal(t, vacuumTempFixtureRows*4096, bytes)
 	require.NoError(t, reopened.db.QueryRow(`SELECT hex(payload) FROM vacuum_fixture WHERE id=1`).Scan(&payload))
 	require.Equal(t, firstPayload, payload, "canceled VACUUM retained durable survivor bytes")
 }
