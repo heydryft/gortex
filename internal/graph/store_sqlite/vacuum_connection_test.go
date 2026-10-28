@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -138,4 +140,83 @@ func TestVacuumUnconfirmedDirectoryDoesNotRun(t *testing.T) {
 	require.False(t, called)
 	require.NoError(t, s.CompactContext(t.Context()), "memory compatibility path does not open a second database")
 	require.Error(t, s.CompactContext(nil))
+}
+
+func TestVacuumTwoStoresKeepDistinctDirectories(t *testing.T) {
+	first, err := Open(filepath.Join(t.TempDir(), "first.sqlite"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, first.Close()) })
+	second, err := Open(filepath.Join(t.TempDir(), "second.sqlite"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, second.Close()) })
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	writer, err := first.writerDB.Conn(ctx)
+	require.NoError(t, err)
+	previous, err := vacuumTempDirectory(ctx, writer)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	entered, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	firstDone, secondDone := make(chan error, 1), make(chan error, 1)
+	checkAndVacuum := func(conn *sql.Conn, path string) error {
+		directory, err := vacuumTempDirectory(ctx, conn)
+		if err != nil {
+			return err
+		}
+		if directory != filepath.Dir(path) {
+			return fmt.Errorf("vacuum directory=%q, want own store %q", directory, filepath.Dir(path))
+		}
+		_, err = conn.ExecContext(ctx, `VACUUM`)
+		return err
+	}
+	go func() {
+		firstDone <- first.withVacuumConnection(ctx, func(conn *sql.Conn) error {
+			close(entered)
+			<-release
+			return checkAndVacuum(conn, first.Path())
+		})
+	}()
+	var firstResult, secondResult error
+	var joinFirstOnce, joinSecondOnce sync.Once
+	joinFirst := func() { joinFirstOnce.Do(func() { firstResult = <-firstDone }) }
+	joinSecond := func() { joinSecondOnce.Do(func() { secondResult = <-secondDone }) }
+	t.Cleanup(func() { cancel(); unblock(); joinFirst() })
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first actual dedicated connection did not enter")
+	}
+	go func() {
+		secondDone <- second.withVacuumConnection(ctx, func(conn *sql.Conn) error {
+			return checkAndVacuum(conn, second.Path())
+		})
+	}()
+	t.Cleanup(func() { cancel(); unblock(); joinSecond() })
+	deadline := time.After(5 * time.Second)
+	for vacuumTempDirectoryGate.waiting() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("second actual store did not wait for the first temp-directory owner")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	writer, err = first.writerDB.Conn(ctx)
+	require.NoError(t, err)
+	during, err := vacuumTempDirectory(ctx, writer)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	require.Equal(t, filepath.Dir(first.Path()), during, "second store cannot redirect first store's scratch")
+	unblock()
+	joinFirst()
+	joinSecond()
+	require.NoError(t, firstResult)
+	require.NoError(t, secondResult)
+	writer, err = first.writerDB.Conn(ctx)
+	require.NoError(t, err)
+	after, err := vacuumTempDirectory(ctx, writer)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	require.Equal(t, previous, after)
 }
