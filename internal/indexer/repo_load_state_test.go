@@ -3,6 +3,7 @@ package indexer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -249,6 +250,75 @@ func TestPrimaryRegisteredStartsTheCoordinatorsThatWaitedForIt(t *testing.T) {
 	f.lc.PrimaryRegistered(f.mainPrefix)
 	require.Eventually(t, func() bool { return f.lc.hasCoordinator(checkout.CheckoutID) },
 		5*time.Second, 20*time.Millisecond, "the primary's registration must start the coordinator that waited for it")
+}
+
+// A selected restart cohort must all be retried by registration, rather than
+// only the first checkout noticed before the primary's index was registered.
+// These are real Git worktrees and durable catalog identities; this test is not
+// the separate reference-host warm-restart workload or its latency evidence.
+func TestPrimaryRegisteredStartsAll24WaitingCoordinators(t *testing.T) {
+	f := newLifecycleFixture(t)
+	defer f.close()
+	ctx := context.Background()
+	main := f.gitRepo("await-cohort-main")
+	const wanted = 24
+	for i := range wanted {
+		f.worktreeOf(main, fmt.Sprintf("await-cohort-%02d", i))
+	}
+	tracked, err := f.lc.Register(ctx, config.RepoEntry{Path: main, Name: "await-cohort-main"}, TrackSourceCLI)
+	require.NoError(t, err)
+	require.NoError(t, tracked.CatalogErr)
+
+	f.restart()
+	require.NoError(t, f.lc.Seed(ctx))
+	require.Nil(t, f.mi.GetMetadata(tracked.Prefix))
+	checkouts, err := f.catalog.ListCheckouts(ctx, tracked.FamilyID)
+	require.NoError(t, err)
+	require.Len(t, checkouts, wanted+1, "the primary and every linked checkout must survive restart")
+	for _, checkout := range checkouts {
+		if checkout.CheckoutID == tracked.CheckoutID {
+			continue
+		}
+		// The same startup edge as an activation reaching ensureCoordinator:
+		// the catalog identity exists, but its primary is not registered yet.
+		f.lc.ensureCoordinator(ctx, tracked.GraphID, checkout)
+		require.False(t, f.lc.hasCoordinator(checkout.CheckoutID))
+	}
+	f.lc.awaitingPrimaryMu.Lock()
+	waiting := len(f.lc.awaitingPrimary[tracked.GraphID])
+	f.lc.awaitingPrimaryMu.Unlock()
+	require.Equal(t, wanted, waiting)
+
+	f.lc.PrimaryRegistered("unrelated-primary")
+	require.Zero(t, f.lc.LiveCoordinators(tracked.FamilyID),
+		"another repository's event must not wake this cohort")
+	registered := make(chan time.Time, 1)
+	f.mi.OnRepoRegistered(func(rec RepoLoad) {
+		if rec.Prefix == tracked.Prefix {
+			registered <- time.Now()
+		}
+		f.lc.PrimaryRegistered(rec.Prefix)
+	})
+	_, err = f.mi.TrackRepoCtx(ctx, config.RepoEntry{Path: main, Name: tracked.Prefix})
+	require.NoError(t, err)
+	var registeredAt time.Time
+	select {
+	case registeredAt = <-registered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the real registration event did not drive the retry")
+	}
+	remaining := time.Until(registeredAt.Add(2 * time.Second))
+	require.Positive(t, remaining, "the retry must start within the registration budget")
+	require.Eventually(t, func() bool {
+		return f.lc.LiveCoordinators(tracked.FamilyID) == wanted
+	}, remaining, 5*time.Millisecond,
+		"all waiting build loops must be live without a janitor sweep")
+	t.Logf("%d/%d coordinators live %s after primary registration", wanted, wanted, time.Since(registeredAt))
+	assert.Empty(t, f.lc.CoordinatorStartFailures())
+	f.lc.awaitingPrimaryMu.Lock()
+	waiting = len(f.lc.awaitingPrimary[tracked.GraphID])
+	f.lc.awaitingPrimaryMu.Unlock()
+	assert.Zero(t, waiting, "successful retries must drain the waiting cohort")
 }
 
 func TestDeclareRepos_DefersFilesystemIdentityUntilWarmup(t *testing.T) {
