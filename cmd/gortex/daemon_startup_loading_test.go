@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/zzet/gortex/internal/daemon"
+	gortexmcp "github.com/zzet/gortex/internal/mcp"
 )
 
 // Exercise the real pre-listen helper and public MCP socket before ANY warmup
@@ -64,8 +65,16 @@ func TestConfiguredLoadingPublishedBeforeServing(t *testing.T) {
 			defer client.Close()
 			require.NoError(t, client.Conn.SetDeadline(time.Now().Add(5*time.Second)))
 			require.NoError(t, client.WriteMCPFrame([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"startup-probe","version":"1"}}}`)))
-			_, err = client.ReadMCPFrame()
+			initialized, err := client.ReadMCPFrame()
 			require.NoError(t, err)
+			var initReply struct {
+				Result struct {
+					Instructions string `json:"instructions"`
+				} `json:"result"`
+			}
+			require.NoError(t, json.Unmarshal(initialized, &initReply))
+			assert.Contains(t, initReply.Result.Instructions, gortexmcp.ServerInstructionsLoading("startup", "starting", 0),
+				"the first real initialize must carry the loading variant before warmup")
 			require.NoError(t, client.WriteMCPFrame([]byte(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_symbols","arguments":{"query":"Startup"}}}`)))
 			frame, err := client.ReadMCPFrame()
 			require.NoError(t, err)
