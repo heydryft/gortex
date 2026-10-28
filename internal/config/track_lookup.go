@@ -11,8 +11,13 @@ import (
 // configured root. Identity remains the caller's responsibility: these lexical
 // buckets are a filter, never evidence that two directories are the same.
 type RepoTrackSnapshot struct {
-	byPrefix map[string][]RepoEntry
-	byBase   map[string][]RepoEntry
+	byPrefix  map[string][]RepoEntry
+	byBase    map[string][]RepoEntry
+	rootPaths []string
+}
+
+func (s *RepoTrackSnapshot) TopLevelRoots() []string {
+	return append([]string(nil), s.rootPaths...)
 }
 
 func (s *RepoTrackSnapshot) PrefixCandidates(prefix string) []RepoEntry {
@@ -49,6 +54,7 @@ func (cm *ConfigManager) RepoTrackSnapshot() *RepoTrackSnapshot {
 		entry.Exclude = append([]string(nil), entry.Exclude...)
 		prefix := ResolvePrefix(entry)
 		s.byPrefix[prefix] = append(s.byPrefix[prefix], entry)
+		s.rootPaths = append(s.rootPaths, entry.Path)
 	}
 	for _, entry := range gc.repoEntriesLocked() {
 		entry.Exclude = append([]string(nil), entry.Exclude...)

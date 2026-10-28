@@ -11,14 +11,49 @@ import (
 	"github.com/zzet/gortex/internal/pathkey"
 )
 
-// configuredTrackEntry checks only roots with the same lexical basename.
-// Physical aliases retain #954's no-op semantics, with the same bounded Stat
-// allowance as live ownership. No startup-wide filesystem snapshot is built.
+// configuredTrackEntry uses requested/canonical basename candidates and
+// completed startup alias facts. Unresolved arbitrary configured aliases mean
+// retry, never permission to persist a duplicate physical root.
 func (mi *MultiIndexer) configuredTrackEntry(ctx context.Context, root string, before time.Time) (*config.RepoEntry, error) {
+	entry, err := mi.configuredTrackEntryWithCanonical(ctx, root, "", before)
+	if err != nil || entry != nil || mi.configMgr == nil {
+		return entry, err
+	}
+	budget, cancel := context.WithDeadline(ctx, before)
+	defer cancel()
+	facts, err := mi.prefixStats.naming(budget, root)
+	if err != nil {
+		return nil, err
+	}
+	return mi.configuredTrackEntryWithCanonical(ctx, root, facts.canonical, before)
+}
+
+func (mi *MultiIndexer) configuredTrackEntryWithCanonical(ctx context.Context, root, canonical string, before time.Time) (*config.RepoEntry, error) {
 	if mi.configMgr == nil {
 		return nil, nil
 	}
-	entries := mi.configMgr.RepoTrackSnapshot().RootCandidates(root)
+	snapshot := mi.configMgr.RepoTrackSnapshot()
+	entries := snapshot.RootCandidates(root)
+	seen := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		seen[entry.Path] = true
+	}
+	appendCandidates := func(path string) {
+		for _, entry := range snapshot.RootCandidates(path) {
+			if !seen[entry.Path] {
+				entries = append(entries, entry)
+				seen[entry.Path] = true
+			}
+		}
+	}
+	if canonical != "" {
+		appendCandidates(canonical)
+		// Warmup may already know an alias configured under another basename.
+		// Reading that completed identity never starts all-root discovery.
+		if known, ok := mi.RepoLoadFor(canonical); ok {
+			appendCandidates(known.Root)
+		}
+	}
 	for _, entry := range entries {
 		if entry.Path == root {
 			return &entry, nil
@@ -42,6 +77,18 @@ func (mi *MultiIndexer) configuredTrackEntry(ctx context.Context, root string, b
 			return nil, errPrefixIdentityUnknown
 		}
 	}
+	if canonical != "" {
+		loads := mi.repoLoads.load()
+		// This is a memory-only completeness check, paid only for a new root
+		// that matched no configured entry. Known/configured tracks return
+		// above; no operation here scans the filesystem of unrelated roots.
+		for _, path := range snapshot.TopLevelRoots() {
+			i, known := loads.find(absRepoRoot(path))
+			if !known || loads.records[i].identityPending || loads.records[i].canonicalKey == "" && loads.records[i].State != RepoLoadMissing {
+				return nil, errPrefixIdentityUnknown
+			}
+		}
+	}
 	return nil, nil
 }
 
@@ -62,7 +109,11 @@ func (l *CheckoutLifecycle) prepareRegistrationNaming(ctx context.Context, entry
 	entry.Path = pathkey.NormalizeVolume(abs)
 	budget, cancel := context.WithDeadline(ctx, before)
 	defer cancel()
-	configured, err := l.mi.configuredTrackEntry(budget, entry.Path, before)
+	facts, err = l.mi.prefixStats.naming(budget, entry.Path)
+	if err != nil {
+		return entry, facts, err
+	}
+	configured, err := l.mi.configuredTrackEntryWithCanonical(budget, entry.Path, facts.canonical, before)
 	if err != nil {
 		return entry, facts, err
 	}
@@ -82,13 +133,6 @@ func (l *CheckoutLifecycle) prepareRegistrationNaming(ctx context.Context, entry
 		entry.Name = observed.registeredPrefix
 		// A byte-exact registered root is already a stable cache key; aliases
 		// still get bounded canonical discovery below.
-	}
-	facts, err = l.mi.prefixStats.naming(budget, entry.Path)
-	if err != nil {
-		if ctx.Err() == nil && ownershipErr != nil {
-			return entry, facts, ownershipErr
-		}
-		return entry, facts, err
 	}
 	if entry.Name != "" && ownershipErr != nil {
 		return entry, facts, ownershipErr
