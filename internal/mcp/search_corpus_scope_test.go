@@ -59,7 +59,7 @@ func newWorkspaceRootBoundServer(t *testing.T) (s *Server, root string) {
 	reg.Register(languages.NewGoExtractor())
 	mi := indexer.NewMultiIndexer(store, reg, search.NewNull(), cm, zap.NewNop())
 	for _, entry := range cm.Global().ReposSnapshot() {
-		_, err := mi.TrackRepoCtx(context.Background(), entry.Path, entry.Name)
+		_, err := mi.TrackRepoCtx(context.Background(), entry)
 		require.NoError(t, err)
 	}
 

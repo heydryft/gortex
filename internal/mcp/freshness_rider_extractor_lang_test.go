@@ -66,7 +66,7 @@ func TestFreshnessRider_ExtractorStalenessIsScopedToTheFilesLanguage(t *testing.
 	store := &riderIndexStateStore{Store: g}
 	mi := indexer.NewMultiIndexer(store, reg, search.NewNull(), cm, zap.NewNop())
 	for _, entry := range cm.Global().ReposSnapshot() {
-		_, err := mi.TrackRepoCtx(context.Background(), entry.Path, entry.Name)
+		_, err := mi.TrackRepoCtx(context.Background(), entry)
 		require.NoError(t, err)
 	}
 

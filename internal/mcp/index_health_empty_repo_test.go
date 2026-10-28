@@ -45,7 +45,7 @@ func healthServerWithIndexedRepos(t *testing.T, named map[string]string) *Server
 	reg.Register(languages.NewGoExtractor())
 	mi := indexer.NewMultiIndexer(graph.New(), reg, search.NewNull(), cm, zap.NewNop())
 	for _, entry := range cm.Global().ReposSnapshot() {
-		_, err := mi.TrackRepoCtx(context.Background(), entry.Path, entry.Name)
+		_, err := mi.TrackRepoCtx(context.Background(), entry)
 		require.NoError(t, err)
 	}
 

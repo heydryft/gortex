@@ -63,7 +63,7 @@ func nestedRepoServer(t *testing.T, entries []config.RepoEntry) (*Server, *graph
 	g := graph.New()
 	mi := indexer.NewMultiIndexer(g, reg, search.NewNull(), cm, zap.NewNop())
 	for _, entry := range cm.Global().ReposSnapshot() {
-		_, err := mi.TrackRepoCtx(context.Background(), entry.Path, entry.Name)
+		_, err := mi.TrackRepoCtx(context.Background(), entry)
 		require.NoError(t, err)
 	}
 
