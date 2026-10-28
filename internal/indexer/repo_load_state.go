@@ -633,7 +633,7 @@ func (s *repoLoadSnapshot) admissionForPath(path string) (RepoLoad, bool) {
 // queued/running state. Unknown identities and linked naming never guess.
 func (s *repoLoadSnapshot) withPrefixCollision(rec RepoLoad) RepoLoad {
 	if rec.State.Ready() || rec.ErrorCode != "" || rec.identityPending || rec.canonicalKey == "" ||
-		!(rec.prefixPinned || rec.plainRoot && !rec.forceInstance) {
+		!rec.prefixPinned && (!rec.plainRoot || rec.forceInstance) {
 		return rec
 	}
 	index, ok := s.readyByPrefix[rec.Prefix]

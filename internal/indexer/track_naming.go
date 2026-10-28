@@ -116,7 +116,7 @@ func (mi *MultiIndexer) trackPrefixFromFacts(entry config.RepoEntry, facts track
 		}
 	}
 	linked := facts.record != nil && facts.record.AdminName != gitstate.MainAdminName
-	if !entry.AsWorktree && !(linked && workspace != "" && workspace != base) {
+	if !entry.AsWorktree && (!linked || workspace == "" || workspace == base) {
 		return base
 	}
 	tag := ""
