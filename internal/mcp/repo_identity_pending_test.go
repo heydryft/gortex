@@ -114,8 +114,9 @@ func TestStateAwareInstructions_ReadyFamilyWithoutScopeStillRetries(t *testing.T
 		return false, nil
 	})
 	require.Equal(t, 2, calls)
-	require.Contains(t, instructions, "scope_binding_pending")
+	require.Contains(t, instructions, "view_building")
+	require.Contains(t, instructions, "checkout discovery is pending")
+	require.NotContains(t, instructions, "scope_binding_pending", "verified family pending keeps the canonical existing producer")
 	require.NotContains(t, instructions, "INACTIVE")
-	require.NotContains(t, instructions, "gortex track")
-	require.Contains(t, instructions, "No graph scope has been granted")
+	require.NotContains(t, instructions, "gortex track "+linked)
 }

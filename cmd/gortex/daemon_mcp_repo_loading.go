@@ -17,7 +17,8 @@ import (
 // failure of the check: Dispatch unwraps it and answers the session with the
 // repository's load state instead of treating the cwd as untracked.
 type repoPendingAdmission struct {
-	load indexer.RepoLoad
+	load               indexer.RepoLoad
+	familyInstructions string
 }
 
 func (a *repoPendingAdmission) Error() string {
@@ -34,8 +35,15 @@ func (a *repoPendingAdmission) Error() string {
 // the session gets the untracked rules — capabilities and track still answer,
 // because tracking again is the repair — with repo_unavailable and the reason
 // instead of repo_not_tracked.
-func (d *mcpDispatcher) pendingRepoRefusal(sess *daemon.Session, frame []byte, rec indexer.RepoLoad) []byte {
+func (d *mcpDispatcher) pendingRepoRefusal(sess *daemon.Session, frame []byte, pending *repoPendingAdmission) []byte {
+	rec := pending.load
 	method := peekFrameMethod(frame)
+	if pending.familyInstructions != "" {
+		if method == "tools/call" && !untrackedBootstrapCall(frame) {
+			return familyDiscoveryError(sess.CWD, frame, "family_pending")
+		}
+		return nil
+	}
 	if !rec.State.Loading() {
 		if method == "tools/call" && !untrackedBootstrapCall(frame) {
 			return repoUnavailableError(sess, frame, rec)

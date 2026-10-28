@@ -1576,6 +1576,16 @@ func ServerInstructionsPendingAutomaticCheckout(cwd string, roots ...string) str
 	return appendTrackedRootsDiagnostic(msg+"\n\n"+toolref.TransportClause()+" "+toolref.DegradedModeLine(), roots)
 }
 
+// PendingAutomaticCheckoutInstructions captures the verified family verdict
+// with its canonical rendered guidance. A later reader must not re-probe the
+// filesystem and accidentally turn this pending result into untracked advice.
+func PendingAutomaticCheckoutInstructions(cwd string, roots ...string) (string, bool) {
+	if !agents.PendingAutomaticCheckout(cwd, roots) {
+		return "", false
+	}
+	return ServerInstructionsPendingAutomaticCheckout(cwd, roots...), true
+}
+
 // ServerInstructionsPendingFamilyLoad retains the terminal load failure as
 // context, without suggesting a second track operation for a declared family.
 func ServerInstructionsPendingFamilyLoad(cwd string, load indexer.RepoLoad, roots ...string) string {
@@ -1706,6 +1716,10 @@ func (s *Server) stateAwareInstructionsWithCheckout(ctx context.Context, cwd, ba
 						return CheckoutAdmissionInstructions(cwd, err)
 					} else if serves {
 						return s.appendLiveInstructions(cwd, base)
+					}
+					roots := agents.FamilyRepoRoots(s.trackedRepoRoots(), s.multiIndexer.ConfiguredRepoRoots())
+					if instructions, known := PendingAutomaticCheckoutInstructions(cwd, roots...); known {
+						return instructions
 					}
 					return ServerInstructionsScopeBindingPending() + "\n\n" + base
 				}

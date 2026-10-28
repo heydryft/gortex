@@ -109,11 +109,30 @@ func TestDispatcher_ReadyFamilyIdentityDoesNotGrantUnprovenCheckoutScope(t *test
 	reply := dispatchJSON(t, d, sess, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_symbols","arguments":{"query":"LoadProbe"}}}`)
 	require.Equal(t, 2, calls, "a matched-ready identity permits only one ordinary authority recheck")
 	data := errorData(t, reply)
-	require.Equal(t, "repo_loading", data["error_code"])
-	require.Equal(t, "scope_binding_pending", data["reason"])
-	require.Equal(t, "scope_binding", data["phase"])
+	require.Equal(t, "view_building", data["error_code"])
+	require.Equal(t, "family_pending", data["reason"])
+	require.Equal(t, "discovery_pending", data["state"])
 	require.NotContains(t, data, "repo_path")
 	require.NotContains(t, reply, "result", "family identity alone grants no graph scope")
+	// Retain the actual typed result before a later filesystem change. Metadata
+	// rendering and graph refusal must not re-probe and become untracked.
+	d.checkoutCWDProbe = nil
+	_, err := d.cwdReachableChecked(t.Context(), linked)
+	var classified *repoPendingAdmission
+	require.ErrorAs(t, err, &classified)
+	require.NotEmpty(t, classified.familyInstructions)
+	require.NoError(t, os.Remove(filepath.Join(linked, ".git")))
+	frame := []byte(`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"read","arguments":{}}}`)
+	require.Contains(t, string(d.pendingRepoRefusal(sess, frame, classified)), `"error_code":"view_building"`)
+	initialized := rewriteMCPAdmissionInstructions("initialize", []byte(`{"jsonrpc":"2.0","id":8,"result":{"instructions":"INACTIVE"}}`), classified.familyInstructions)
+	require.Contains(t, string(initialized), "view_building")
+	require.NotContains(t, string(initialized), "INACTIVE")
+	unknown := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(unknown, ".git"), 0755))
+	require.False(t, mi.RepoIdentityPending())
+	outside := &daemon.Session{ID: "foreign-family", CWD: unknown}
+	negative := dispatchJSON(t, d, outside, `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"read","arguments":{}}}`)
+	require.Equal(t, "repo_not_tracked", errorCode(negative), "a genuine foreign family stays definitively untracked after identity completion")
 }
 
 func TestExtractToolResult_ScopeBindingPendingDoesNotClaimTracking(t *testing.T) {

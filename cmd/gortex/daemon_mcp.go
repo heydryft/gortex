@@ -123,7 +123,7 @@ func (d *mcpDispatcher) Dispatch(ctx context.Context, sess *daemon.Session, fram
 		admissionErr = nil
 	}
 	var terminalFamilyLoad []indexer.RepoLoad
-	if pending != nil && !pending.load.State.Loading() && agents.PendingAutomaticCheckout(sess.CWD, d.familyRoots()) {
+	if pending != nil && pending.load.State.Unavailable() && agents.PendingAutomaticCheckout(sess.CWD, d.familyRoots()) {
 		terminalFamilyLoad = []indexer.RepoLoad{pending.load}
 		pending = nil // still unadmitted; only the guidance/refusal classification changes
 	}
@@ -135,7 +135,7 @@ func (d *mcpDispatcher) Dispatch(ctx context.Context, sess *daemon.Session, fram
 		return d.familyDiscoveryRefusal(sess.CWD, frame, "family_member"), nil
 	}
 	if pending != nil {
-		if refused := d.pendingRepoRefusal(sess, frame, pending.load); refused != nil {
+		if refused := d.pendingRepoRefusal(sess, frame, pending); refused != nil {
 			return refused, nil
 		}
 	}
@@ -234,6 +234,9 @@ func (d *mcpDispatcher) Dispatch(ctx context.Context, sess *daemon.Session, fram
 	}
 	if admissionErr != nil {
 		out = rewriteCheckoutAdmissionResponse(peekFrameMethod(frame), out, sess.CWD, admissionErr)
+	}
+	if pending != nil && pending.familyInstructions != "" {
+		out = rewriteMCPAdmissionInstructions(peekFrameMethod(frame), out, pending.familyInstructions)
 	}
 	if pending != nil {
 		d.notePendingRepoSession(sess, peekFrameMethod(frame), pending.load)
@@ -427,6 +430,10 @@ func checkoutAdmissionError(cwd string, inbound []byte, err error) []byte {
 }
 
 func rewriteCheckoutAdmissionResponse(method string, out []byte, cwd string, err error) []byte {
+	return rewriteMCPAdmissionInstructions(method, out, gortexmcp.CheckoutAdmissionInstructions(cwd, err))
+}
+
+func rewriteMCPAdmissionInstructions(method string, out []byte, instructions string) []byte {
 	if method != "initialize" && method != "server/discover" {
 		return out
 	}
@@ -438,7 +445,7 @@ func rewriteCheckoutAdmissionResponse(method string, out []byte, cwd string, err
 	if !ok {
 		return out
 	}
-	result["instructions"] = gortexmcp.CheckoutAdmissionInstructions(cwd, err)
+	result["instructions"] = instructions
 	updated, marshalErr := json.Marshal(reply)
 	if marshalErr != nil {
 		return out
@@ -516,6 +523,9 @@ func (d *mcpDispatcher) cwdReachableChecked(ctx context.Context, cwd string) (bo
 					if err != nil || reachable {
 						return err == nil && reachable, err
 					}
+				}
+				if instructions, known := gortexmcp.PendingAutomaticCheckoutInstructions(cwd, d.familyRoots()...); known {
+					return false, &repoPendingAdmission{load: rec, familyInstructions: instructions}
 				}
 				rec = indexer.RepoLoad{State: indexer.RepoLoadIdentityPending, Reason: "scope_binding_pending"}
 			}
