@@ -89,11 +89,12 @@ func TestEditProbeAccountingRejectsMissingApplicableACKAndWrongAttempt(t *testin
 				delete(body["acknowledgement"].(map[string]any)["observed_execution_ms"].(map[string]any), "parse")
 			} else {
 				p := body["coalesced_publication"].(map[string]any)["timings"].(map[string]any)["phase_timing"].(map[string]any)["patch_accounting"].(map[string]any)
-				if name == "unmeasured_physical" {
+				switch name {
+				case "unmeasured_physical":
 					p["phase_states"].(map[string]any)["apply"] = "not_observed"
-				} else if name == "wrong_retry" {
+				case "wrong_retry":
 					p["attempt_retry"] = json.Number("1")
-				} else {
+				default:
 					p["attempt_ticket"] = json.Number("9")
 				}
 			}

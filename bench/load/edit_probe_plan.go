@@ -95,11 +95,11 @@ func makeEditProbePlan(c Corpus, seed int64, count int) (editProbePlan, error) {
 	for i := 0; i < count; i++ {
 		interval := rng.ExpFloat64() * float64(editProbeMean)
 		if math.IsNaN(interval) || math.IsInf(interval, 0) || interval >= float64(math.MaxInt64) {
-			return editProbePlan{}, errors.New("Poisson interval overflow")
+			return editProbePlan{}, errors.New("poisson interval overflow")
 		}
 		delta := max(int64(1), int64(interval))
 		if due > math.MaxInt64-delta {
-			return editProbePlan{}, errors.New("Poisson offered-plan duration overflow")
+			return editProbePlan{}, errors.New("poisson offered-plan duration overflow")
 		}
 		due += delta
 		marker := fmt.Sprintf("GortexEditProbe%016xN%03d", uint64(seed), i)
