@@ -266,11 +266,6 @@ Use `name` for a new root, or edit the configured root's `name` and reload.
 `owner_state` is `present`, `missing` or `unknown`; only `missing` suggests
 inspecting an untrack of the owner.
 
-When configured alias identities are not established yet, an unmatched track
-request returns structured `repo_loading`, `retryable:true`, with
-`reason: identity_pending`. Retry after startup identity resolution completes;
-the daemon does not add another physical-root entry on this uncertain result.
-
 `track_repository` may answer `accepted` while its detached initial index
 continues. Its final outcome is retained for ten minutes under the canonical
 root and the request's `name`, `as_worktree` and `force` options. A retry reads

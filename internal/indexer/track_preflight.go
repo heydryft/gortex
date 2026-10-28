@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -12,9 +11,8 @@ import (
 	"github.com/zzet/gortex/internal/pathkey"
 )
 
-// configuredTrackEntry uses requested/canonical basename candidates and
-// completed startup alias facts. Unresolved arbitrary configured aliases mean
-// retry, never permission to persist a duplicate physical root.
+// configuredTrackEntry inspects selected lexical/known canonical candidates.
+// It does not require identity discovery for unrelated configured roots.
 func (mi *MultiIndexer) configuredTrackEntry(ctx context.Context, root string, before time.Time, requested ...string) (*config.RepoEntry, error) {
 	entry, err := mi.configuredTrackEntryWithCanonical(ctx, root, "", before, requested...)
 	if err != nil || entry != nil || mi.configMgr == nil {
@@ -71,7 +69,6 @@ func (mi *MultiIndexer) configuredTrackEntryWithCanonical(ctx context.Context, r
 	budget, cancel := context.WithDeadline(ctx, before)
 	defer cancel()
 	var candidate *prefixStatResult
-	provedDistinct := make(map[string]bool)
 	for _, entry := range entries {
 		// Distinct roots in a basename bucket need no I/O unless one might
 		// actually be an alias. Same-basename symlinks are intentionally kept.
@@ -83,27 +80,8 @@ func (mi *MultiIndexer) configuredTrackEntryWithCanonical(ctx context.Context, r
 		if sameObservedDirectory(*candidate, owner) {
 			return &entry, nil
 		}
-		if candidate.err == nil && candidate.info != nil && candidate.info.IsDir() &&
-			(owner.err == nil && owner.info != nil && owner.info.IsDir() || errors.Is(owner.err, os.ErrNotExist)) {
-			provedDistinct[entry.Path] = true
-		}
 		if pathkey.EqualPaths(entry.Path, root) && (candidate.err != nil || owner.err != nil) {
 			return nil, errPrefixIdentityUnknown
-		}
-	}
-	if canonical != "" {
-		loads := mi.repoLoads.load()
-		// This is a memory-only completeness check, paid only for a new root
-		// that matched no configured entry. Known/configured tracks return
-		// above; no operation here scans the filesystem of unrelated roots.
-		for _, path := range snapshot.TopLevelRoots() {
-			if provedDistinct[path] {
-				continue
-			}
-			i, known := loads.find(absRepoRoot(path))
-			if !known || loads.records[i].identityPending || loads.records[i].canonicalKey == "" && loads.records[i].State != RepoLoadMissing {
-				return nil, errPrefixIdentityUnknown
-			}
 		}
 	}
 	return nil, nil

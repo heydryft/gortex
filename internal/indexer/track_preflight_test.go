@@ -100,58 +100,6 @@ func TestTrackPreflightDoesNotInspectUnrelatedConfiguredRoots(t *testing.T) {
 	require.Empty(t, foreign, "track admission must not stat the other 1000 configured roots")
 }
 
-func TestConfiguredCustomNameFollowsDifferentBasenameAlias(t *testing.T) {
-	_, mi, cm := newWorktreeTestIndexer(t)
-	t.Cleanup(func() { require.NoError(t, mi.Close(context.Background())) })
-	owner := filepath.Join(t.TempDir(), "owner")
-	require.NoError(t, os.MkdirAll(owner, 0o755))
-	alias := filepath.Join(t.TempDir(), "different-name")
-	if err := os.Symlink(owner, alias); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
-	require.NoError(t, cm.Global().AddRepo(config.RepoEntry{Path: owner, Name: "pinned", Workspace: "configured-workspace"}))
-	lifecycle := &CheckoutLifecycle{mi: mi, cfgMgr: cm} // no live catalog/registry
-	entry, err := lifecycle.prepareRegistrationEntry(t.Context(), config.RepoEntry{Path: alias}, time.Now().Add(prefixOwnershipTimeout))
-	require.NoError(t, err)
-	require.Equal(t, "pinned", entry.Name)
-	require.Equal(t, "configured-workspace", entry.Workspace)
-	_, err = lifecycle.prepareRegistrationEntry(t.Context(), config.RepoEntry{Path: alias, Name: "other"}, time.Now().Add(prefixOwnershipTimeout))
-	require.ErrorContains(t, err, "already configured")
-	require.Empty(t, mi.AllMetadata())
-}
-
-func TestColdConfiguredAliasRequiresCompletedIdentityBeforeNewRoot(t *testing.T) {
-	_, mi, cm := newWorktreeTestIndexer(t)
-	t.Cleanup(func() { require.NoError(t, mi.Close(context.Background())) })
-	owner := filepath.Join(t.TempDir(), "owner")
-	require.NoError(t, os.MkdirAll(owner, 0o755))
-	configured := filepath.Join(t.TempDir(), "pinned-spelling")
-	if err := os.Symlink(owner, configured); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
-	require.NoError(t, cm.Global().AddRepo(config.RepoEntry{Path: configured, Name: "pinned", Workspace: "configured-workspace"}))
-	lifecycle := &CheckoutLifecycle{mi: mi, cfgMgr: cm}
-	require.ErrorIs(t, lifecycle.PreflightTrack(t.Context(), config.RepoEntry{Path: owner}), errPrefixIdentityUnknown)
-	_, err := mi.TrackRepoCtx(t.Context(), config.RepoEntry{Path: owner})
-	require.ErrorIs(t, err, errPrefixIdentityUnknown, "authoritative admission must not persist a second physical-root entry")
-	require.Empty(t, mi.AllMetadata())
-	require.Len(t, cm.Global().ReposSnapshot(), 1)
-	mi.ExpectRepos(cm.Global().ReposSnapshot())
-	entry, err := lifecycle.prepareRegistrationEntry(t.Context(), config.RepoEntry{Path: owner}, time.Now().Add(prefixOwnershipTimeout))
-	require.NoError(t, err)
-	require.Equal(t, "pinned", entry.Name)
-	require.Equal(t, "configured-workspace", entry.Workspace)
-	_, err = lifecycle.prepareRegistrationEntry(t.Context(), config.RepoEntry{Path: owner, Name: "other"}, time.Now().Add(prefixOwnershipTimeout))
-	require.ErrorContains(t, err, "already configured")
-	_, err = mi.TrackRepoCtx(t.Context(), config.RepoEntry{Path: owner})
-	require.NoError(t, err)
-	require.NotNil(t, mi.GetMetadata("pinned"))
-	require.Equal(t, configured, mi.GetMetadata("pinned").RootPath)
-	entries := cm.Global().ReposSnapshot()
-	require.Len(t, entries, 1)
-	require.Equal(t, configured, entries[0].Path)
-}
-
 func TestColdKnownConfiguredOwnerStillReturnsTypedCollision(t *testing.T) {
 	_, mi, cm := newWorktreeTestIndexer(t)
 	t.Cleanup(func() { require.NoError(t, mi.Close(context.Background())) })
