@@ -1312,8 +1312,10 @@ func (s *Server) waitBatchGraphReceipts(ctx context.Context, files []batchTransa
 			s.releaseDispatchSlotForWait(ctx)
 		}
 		timer := time.NewTimer(remaining)
+		waitLap := s.beginAcknowledgementLap(ctx, editAckReindexWait)
 		select {
 		case <-receipt.done:
+			waitLap.finish()
 			if !timer.Stop() {
 				select {
 				case <-timer.C:
@@ -1321,6 +1323,7 @@ func (s *Server) waitBatchGraphReceipts(ctx context.Context, files []batchTransa
 				}
 			}
 		case <-timer.C:
+			waitLap.finish()
 			return
 		}
 	}

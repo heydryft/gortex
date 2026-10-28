@@ -587,14 +587,18 @@ func (s *Server) mutationReindexState(ctx context.Context, absPath string) mutat
 				s.releaseDispatchSlotForWait(ctx)
 				timer := time.NewTimer(s.mutationWaitDuration())
 				defer timer.Stop()
+				waitLap := s.beginAcknowledgementLap(ctx, editAckReindexWait)
 				select {
 				case <-receipt.done:
+					waitLap.finish()
 					outcome := receipt.outcome(false)
 					outcome.Receipt = ""
 					return outcome
 				case <-timer.C:
+					waitLap.finish()
 					return receipt.outcome(true)
 				case <-ctx.Done():
+					waitLap.finish()
 					return receipt.outcome(true)
 				}
 			}

@@ -10,6 +10,8 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/require"
+
+	"github.com/zzet/gortex/internal/indexer"
 )
 
 func TestEditAcknowledgementRepeatedDisjointChunksAndUnclassifiedGap(t *testing.T) {
@@ -163,8 +165,60 @@ func TestEditAcknowledgementRealDiskAndCanonicalTicketBoundaries(t *testing.T) {
 		require.EqualValues(t, 1, ack.TicketAdmission.Completed)
 		require.Equal(t, "measured", ack.DiskWrite.State)
 		require.Equal(t, "measured", ack.TicketAdmission.State, "failed admission is an observed call, not fake missing work")
+		if scheduleErr == nil {
+			require.EqualValues(t, 1, ack.ReindexWait.Completed)
+			require.Equal(t, "measured", ack.ReindexWait.State, "immediate ticket completion still reaches the actual wait")
+		} else {
+			require.Equal(t, "unobserved", ack.ReindexWait.State)
+		}
 		require.Equal(t, "unobserved", ack.ParseGate.State, "a raw commit did not call the gate")
 		require.True(t, ack.LapsDisjoint)
+	}
+}
+
+type acknowledgementWaitWatcher struct {
+	mutationTestWatcher
+	afterAdmission func()
+}
+
+func (w acknowledgementWaitWatcher) EnqueueFileMutation(ctx context.Context, path string) (*indexer.MutationTicket, error) {
+	ticket, err := w.mutationTestWatcher.EnqueueFileMutation(ctx, path)
+	if w.afterAdmission != nil {
+		w.afterAdmission()
+	}
+	return ticket, err
+}
+
+func TestEditAcknowledgementActualWaitTimerAndCancellation(t *testing.T) {
+	for _, cancelled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "timer", true: "caller cancellation"}[cancelled], func(t *testing.T) {
+			s := newMutationServer()
+			s.mutationReindexWait = 5 * time.Millisecond // exercise the existing timer, not a latency assertion
+			done := make(chan indexer.MutationResult, 1)
+			ctx, cancel := context.WithCancel(canonicalTimingContext())
+			defer cancel()
+			watcher := acknowledgementWaitWatcher{mutationTestWatcher: mutationTestWatcher{done: done}}
+			if cancelled {
+				watcher.afterAdmission = cancel
+			}
+			s.watcher = watcher
+			ctx, ack, _ := s.withEditAcknowledgement(ctx)
+			path := filepath.Join(t.TempDir(), "wait.go")
+			commitTimingFixture(t, s, ctx, path, "package p\n")
+			// Release the sole existing ticket consumer on every assertion path.
+			t.Cleanup(func() { close(done) })
+			outcome := s.mutationReindexState(ctx, path)
+			require.True(t, outcome.Pending)
+			require.NotEmpty(t, outcome.Receipt)
+			ack.finishActual()
+			ack.finishReply(mcp.NewToolResultText("pending"), nil)
+			got := ack.snapshot()
+			require.Equal(t, "measured", got.ReindexWait.State)
+			require.EqualValues(t, 1, got.ReindexWait.Started)
+			require.EqualValues(t, 1, got.ReindexWait.Completed)
+			require.NotNil(t, got.ReindexWait.AckMS)
+			require.True(t, got.LapsDisjoint)
+		})
 	}
 }
 

@@ -14,6 +14,7 @@ const (
 	editAckParseGate editAcknowledgementLapKind = iota
 	editAckDiskWrite
 	editAckTicketAdmission
+	editAckReindexWait
 	editAckLapCount
 )
 

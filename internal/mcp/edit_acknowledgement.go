@@ -59,6 +59,7 @@ type editAcknowledgementSnapshot struct {
 	ParseGate            editAcknowledgementLapSnapshot
 	DiskWrite            editAcknowledgementLapSnapshot
 	TicketAdmission      editAcknowledgementLapSnapshot
+	ReindexWait          editAcknowledgementLapSnapshot
 	LapsDisjoint         bool
 }
 
@@ -132,6 +133,7 @@ func (a *editAcknowledgement) snapshot() editAcknowledgementSnapshot {
 	result.ParseGate = laps.snapshot(editAckParseGate, a.entered, reply, actual)
 	result.DiskWrite = laps.snapshot(editAckDiskWrite, a.entered, reply, actual)
 	result.TicketAdmission = laps.snapshot(editAckTicketAdmission, a.entered, reply, actual)
+	result.ReindexWait = laps.snapshot(editAckReindexWait, a.entered, reply, actual)
 	result.LapsDisjoint = !laps.overlap
 	return result
 }
