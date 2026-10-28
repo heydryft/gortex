@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/zzet/gortex/internal/config"
 )
 
 func TestHungOwnerStatBounded(t *testing.T) {
@@ -35,7 +36,10 @@ func TestHungOwnerStatBounded(t *testing.T) {
 	}
 	result := make(chan error, 1)
 	started := time.Now()
-	go func() { _, err := mi.observePrefixOwnership(t.Context(), "src", candidate); result <- err }()
+	go func() {
+		_, err := mi.TrackRepoCtx(t.Context(), config.RepoEntry{Path: candidate, Name: "src"})
+		result <- err
+	}()
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):

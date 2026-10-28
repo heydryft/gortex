@@ -385,6 +385,10 @@ type CheckoutLifecycle struct {
 	refViewRetention RefViewRetention
 	// indexBarrier is the promotion's test seam; nil in production.
 	indexBarrier func()
+	// afterRegisterTrack is a test-only scheduling barrier, nil in production:
+	// registry ownership can disappear after a nil Track result and before
+	// checkout recording. It does not replace the real track implementation.
+	afterRegisterTrack func()
 	// routeBarrier stands in for the route withdrawal a promotion runs after
 	// the mode flip, which is the one write no fixture can make the catalog
 	// refuse. A test seam; nil in production.
@@ -777,6 +781,9 @@ func (l *CheckoutLifecycle) Register(
 	result, err := l.mi.TrackRepoCtx(WithIndexOrigin(ctx, "checkout_register_"+string(source)), entry)
 	if err != nil {
 		return RegisterResult{}, err
+	}
+	if l.afterRegisterTrack != nil {
+		l.afterRegisterTrack()
 	}
 	out := RegisterResult{Index: result, AlreadyTracked: result == nil}
 	requested := config.ResolvePrefix(entry)

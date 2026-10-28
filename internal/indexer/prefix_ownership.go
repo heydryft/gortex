@@ -130,16 +130,23 @@ type prefixOwnershipObservation struct {
 // there. The stable repository mutation lane retains its own admission recheck.
 // Both stats and one owner-replacement retry share this ONE deadline.
 func (mi *MultiIndexer) observePrefixOwnership(ctx context.Context, prefix, root string) (prefixOwnershipObservation, error) {
+	return mi.observePrefixOwnershipBefore(ctx, prefix, root, time.Now().Add(prefixOwnershipTimeout), nil)
+}
+
+// before is shared with candidate validation during one preparation. A later
+// coordinated re-admission receives its own budget, not an expired deadline
+// from time spent waiting for the repository's stable mutation lane.
+func (mi *MultiIndexer) observePrefixOwnershipBefore(ctx context.Context, prefix, root string, before time.Time, candidate *prefixStatResult) (prefixOwnershipObservation, error) {
 	if err := ctx.Err(); err != nil {
 		return prefixOwnershipObservation{}, err
 	}
-	budget, cancel := context.WithTimeout(ctx, prefixOwnershipTimeout)
+	budget, cancel := context.WithDeadline(ctx, before)
 	defer cancel()
 	for attempt := 0; attempt < 2; attempt++ {
 		mi.mu.RLock()
 		snapshot := mi.prefixOwnerSnapshotLocked(prefix, root)
 		mi.mu.RUnlock()
-		observation, err := mi.samplePrefixOwnership(budget, snapshot)
+		observation, err := mi.samplePrefixOwnership(budget, snapshot, candidate)
 		if ctx.Err() != nil {
 			return prefixOwnershipObservation{}, ctx.Err()
 		}
@@ -151,11 +158,12 @@ func (mi *MultiIndexer) observePrefixOwnership(ctx context.Context, prefix, root
 		}
 		// Do not reuse FileInfo across a replacement, even when the new owner
 		// has the same spelling. Resample under the original remaining budget.
+		candidate = nil
 	}
 	return prefixOwnershipObservation{}, errPrefixOwnerChanged
 }
 
-func (mi *MultiIndexer) samplePrefixOwnership(ctx context.Context, snapshot prefixOwnerSnapshot) (prefixOwnershipObservation, error) {
+func (mi *MultiIndexer) samplePrefixOwnership(ctx context.Context, snapshot prefixOwnerSnapshot, candidate *prefixStatResult) (prefixOwnershipObservation, error) {
 	out := prefixOwnershipObservation{snapshot: snapshot}
 	for _, alias := range snapshot.aliases {
 		if alias.root == snapshot.root {
@@ -166,7 +174,11 @@ func (mi *MultiIndexer) samplePrefixOwnership(ctx context.Context, snapshot pref
 	if snapshot.owner.meta == nil && len(snapshot.aliases) == 0 {
 		return out, nil
 	}
-	out.candidate = mi.prefixStats.observe(ctx, snapshot.root)
+	if candidate != nil {
+		out.candidate = *candidate
+	} else {
+		out.candidate = mi.prefixStats.observe(ctx, snapshot.root)
+	}
 	owners := make(map[string]prefixStatResult, len(snapshot.aliases)+1)
 	ownerStat := func(root string) prefixStatResult {
 		if result, ok := owners[root]; ok {

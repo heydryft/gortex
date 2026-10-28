@@ -13,15 +13,22 @@ func TestRegisterCollisionNoCatalogNoWatcherNoSave(t *testing.T) {
 	f := newLifecycleFixture(t)
 	t.Cleanup(f.close)
 	root := f.gitRepo("src")
+	indexed, err := f.mi.TrackRepoCtx(t.Context(), config.RepoEntry{Path: root, Name: "src"})
+	require.NoError(t, err)
+	require.NotNil(t, indexed)
 	before, err := os.ReadFile(f.cfgPath)
 	require.NoError(t, err)
 	beforeConfig, beforeRevision := f.cm.GetRepoConfig("src"), f.cm.Revision()
-	// A nil registry slot exercises the legacy nil track-result contract
-	// without introducing a fake Track implementation. It is not proof that
-	// any exact root was registered, whatever the requested basename says.
-	f.mi.mu.Lock()
-	f.mi.repos["src"] = nil
-	f.mi.mu.Unlock()
+	beforePrefixes := f.cm.WorkspacePrefixes()
+	beforeInvalidated, beforeAnalysed := f.notify.counts()
+	// Exercise a real nil track result, then withdraw its registry witness at
+	// the recording boundary. A previous successful no-op is not authority to
+	// recreate catalog/watcher/config state after ownership has disappeared.
+	f.lc.afterRegisterTrack = func() {
+		f.mi.mu.Lock()
+		delete(f.mi.repos, "src")
+		f.mi.mu.Unlock()
+	}
 	result, err := f.lc.Register(t.Context(), config.RepoEntry{Path: root, Name: "src"}, TrackSourceCLI)
 	var collision *PrefixCollisionError
 	require.ErrorAs(t, err, &collision)
@@ -37,14 +44,14 @@ func TestRegisterCollisionNoCatalogNoWatcherNoSave(t *testing.T) {
 	require.Equal(t, before, after)
 	require.Equal(t, beforeConfig, f.cm.GetRepoConfig("src"))
 	require.Equal(t, beforeRevision, f.cm.Revision(), "nil track must not publish a prepared candidate config")
-	require.Empty(t, f.cm.WorkspacePrefixes())
+	require.Equal(t, beforePrefixes, f.cm.WorkspacePrefixes())
 	f.watcher.mu.Lock()
 	calls := append([]string(nil), f.watcher.calls...)
 	f.watcher.mu.Unlock()
 	require.Empty(t, calls)
 	invalidated, analysed := f.notify.counts()
-	require.Zero(t, invalidated)
-	require.Zero(t, analysed)
+	require.Equal(t, beforeInvalidated, invalidated)
+	require.Equal(t, beforeAnalysed, analysed)
 }
 
 func TestRecordImplicitRequiresExactRegisteredRoot(t *testing.T) {
