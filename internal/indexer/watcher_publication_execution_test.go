@@ -175,7 +175,9 @@ func TestCanonicalPublicationDiscardsRetryAttemptSpans(t *testing.T) {
 		return idx.incrementalPointWatcherPathObserved(idx.rootPath, file, stamps)
 	}
 	origin := time.Now()
-	record := NewPublicationPhaseRecorder(1, 1).Begin("", "retry", PublicationSourceMCPEdit, origin)
+	recorder := NewPublicationPhaseRecorder(1, 1)
+	t.Cleanup(func() { runtime.KeepAlive(recorder) })
+	record := recorder.Begin("", "retry", PublicationSourceMCPEdit, origin)
 	ticket, err := w.EnqueueFileMutation(WithPublicationRecord(t.Context(), record), path)
 	require.NoError(t, err)
 	awaitPublicationSignal(t, secondEntered)
@@ -189,6 +191,7 @@ func TestCanonicalPublicationDiscardsRetryAttemptSpans(t *testing.T) {
 	require.EqualValues(t, 2, calls.Load())
 	require.Nil(t, record.Snapshot().debounce, "winning retry backoff is not the initial debounce and cannot borrow the failed attempt's pair")
 	require.Equal(t, "not_observed", record.Snapshot().EditTimings().States["debounce"])
+	require.Same(t, recorder, record.owner.Value(), "late completion requires retained recorder membership")
 	require.Eventually(t, func() bool { return record.Snapshot().attemptWindow != nil }, 2*time.Second, time.Millisecond)
 	require.Equal(t, 1, record.Snapshot().attemptWindow.retry)
 	require.GreaterOrEqual(t, record.Snapshot().attemptWindow.startNS, firstFailed.Sub(origin).Nanoseconds(), "physical wall belongs only to the winning retry")
