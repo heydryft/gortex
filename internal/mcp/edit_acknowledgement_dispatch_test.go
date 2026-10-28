@@ -26,7 +26,19 @@ func TestAcknowledgementDispatchSnapshotKeepsSeparateOriginAndInvalidStates(t *t
 	require.Equal(t, 6.0, *ack.PhasesMS["dispatcher_preamble"])
 	require.Equal(t, 30.0, *ack.DispatcherReplyMS)
 	require.Equal(t, 20.0, *ack.ReplyWallMS)
-	require.Nil(t, ack.SubtotalMS, "outside-bound admission phases cannot become a bound-call subtotal")
+	require.Equal(t, 5.0, *ack.PhasesMS["caller_result"], "actual25→reply30 belongs to A")
+	require.Equal(t, 5.0, *ack.SubtotalMS, "outside-bound queue4+preamble6 must not enter the bound-call subtotal")
+	require.Equal(t, 15.0, *ack.UnattributedMS)
+	a.mu.Lock()
+	savedActual := a.actual
+	a.actual = time.Time{}
+	a.mu.Unlock()
+	withoutActual := a.snapshot()
+	require.Nil(t, buildAcknowledgementPayload(&withoutActual, "observed").SubtotalMS,
+		"outside-bound admission alone cannot become a bound-call subtotal")
+	a.mu.Lock()
+	a.actual = savedActual
+	a.mu.Unlock()
 	*snapshot.DispatcherQueueMS = 999
 	require.Equal(t, 4.0, *a.snapshot().DispatcherQueueMS)
 	for _, tc := range []struct{ entered, granted time.Time }{
