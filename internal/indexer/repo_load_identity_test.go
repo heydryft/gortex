@@ -191,3 +191,27 @@ func TestRepoIdentityPermissionAndDeviceErrorsAreNotNegativeEvidence(t *testing.
 		})
 	}
 }
+
+func TestRepoIdentityOldPublisherCannotClearNewRegistrationUncertainty(t *testing.T) {
+	root := t.TempDir()
+	mi := newRepoLoadTestMulti(t)
+	entries := []config.RepoEntry{{Path: root}}
+	mi.DeclareRepos(entries)
+	before := mi.RepoLoads()[0]
+	resolved, err := resolveRepoLoadIdentity(before)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".git"), []byte("unreadable identity format"), 0644))
+	mi.markRepoRegistered("registered", root)
+	require.True(t, mi.RepoIdentityPending())
+	mi.publishRepoLoadIdentity(before, resolved)
+	require.True(t, mi.RepoIdentityPending(), "an older successful observation must not replace a newer uncertain registration identity")
+	rec, found := mi.RepoLoadFor(root)
+	require.True(t, found)
+	require.Equal(t, RepoLoadReady, rec.State, "uncertain alias identity does not revoke authoritative graph registration")
+	require.Contains(t, rec.Reason, "identity resolution pending")
+	require.NoError(t, os.Remove(filepath.Join(root, ".git")))
+	mi.ExpectRepos(entries)
+	require.False(t, mi.RepoIdentityPending())
+	rec, _ = mi.RepoLoadFor(root)
+	require.Empty(t, rec.Reason)
+}

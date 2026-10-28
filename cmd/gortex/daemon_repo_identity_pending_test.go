@@ -52,6 +52,19 @@ func TestDispatcher_ColdIdentityPendingHasNoInventedScope(t *testing.T) {
 		require.NotContains(t, data, "repo")
 		require.NotContains(t, data, "repo_path")
 		require.NotContains(t, reply, "result")
+		for _, tool := range []string{
+			`"name":"index_health","arguments":{}`,
+			`"name":"workspace","arguments":{"operation":"index"}`,
+		} {
+			health := dispatchJSON(t, d, sess, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{`+tool+`}}`)
+			text := toolResultText(t, health)
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal([]byte(text), &payload))
+			require.Equal(t, "identity_pending", payload["reason"])
+			require.Empty(t, payload["repos"], "an unbound diagnostic must not disclose named repositories")
+		}
+		track := dispatchJSON(t, d, sess, `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"track_repository","arguments":{"path":"."}}}`)
+		require.Equal(t, "identity_pending", errorData(t, track)["reason"], "unknown ownership must not duplicate a configured alias through bootstrap tracking")
 	}
 	mi.ExpectRepos(entries)
 	physicalSess := &daemon.Session{ID: "resolved-alias", CWD: physical}
@@ -70,6 +83,13 @@ func TestDispatcher_IdentityPendingPreservesAuthoritativePositives(t *testing.T)
 	ok, err := d.cwdReachableChecked(t.Context(), registered)
 	require.NoError(t, err)
 	require.True(t, ok)
+	healthySession := &daemon.Session{ID: "registered-while-identity-pending", CWD: registered}
+	d.SessionStarted(healthySession, func([]byte) error { return nil })
+	t.Cleanup(func() { d.SessionEnded(healthySession) })
+	dispatchJSON(t, d, healthySession, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"positive-control","version":"1"}}}`)
+	healthyReply := dispatchJSON(t, d, healthySession, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_symbols","arguments":{"query":"RegisteredOnly"}}}`)
+	require.Empty(t, errorCode(healthyReply))
+	require.Contains(t, toolResultText(t, healthyReply), "RegisteredOnly")
 	checkout := t.TempDir()
 	d.checkoutCWDProbe = func(_ context.Context, cwd string) (bool, error) { return cwd == checkout, nil }
 	ok, err = d.cwdReachableChecked(t.Context(), checkout)

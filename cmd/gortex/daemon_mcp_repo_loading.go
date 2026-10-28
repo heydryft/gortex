@@ -53,6 +53,9 @@ func (d *mcpDispatcher) pendingRepoRefusal(sess *daemon.Session, frame []byte, r
 		case legacy == "index_health":
 			return d.loadingIndexHealth(frame, rec)
 		case loadingAdmittedTool(legacy):
+			if rec.State == indexer.RepoLoadIdentityPending && (legacy == "track_repository" || legacy == "index_repository") {
+				return d.repoLoadingError(sess, frame, rec)
+			}
 			return nil
 		default:
 			return d.repoLoadingError(sess, frame, rec)
@@ -149,24 +152,21 @@ func repoUnavailableError(sess *daemon.Session, inbound []byte, rec indexer.Repo
 // unbound session must see only its own, so the answer is built here rather
 // than filtered out of that snapshot.
 func (d *mcpDispatcher) loadingIndexHealth(inbound []byte, rec indexer.RepoLoad) []byte {
-	if rec.State == indexer.RepoLoadIdentityPending {
-		return d.repoLoadingError(&daemon.Session{}, inbound, rec)
-	}
 	phase, percent := "starting", 0
 	if d.srv != nil {
 		phase, percent = d.srv.WarmupProgress()
 	}
+	repos := []map[string]any{}
+	message := gortexmcp.ServerInstructionsIdentityPending()
+	reason := ""
+	if rec.State == indexer.RepoLoadIdentityPending {
+		phase, percent, reason = "identity_resolution", 0, "identity_pending"
+	} else {
+		repos = append(repos, map[string]any{"repo": rec.Prefix, "path": rec.Root, "state": string(rec.State), "since": rec.Since})
+		message = gortexmcp.RepoLoadingSuggestion(rec.Label())
+	}
 	payload, _ := json.Marshal(map[string]any{
-		"status":  "loading",
-		"phase":   phase,
-		"percent": percent,
-		"repos": []map[string]any{{
-			"repo":  rec.Prefix,
-			"path":  rec.Root,
-			"state": string(rec.State),
-			"since": rec.Since,
-		}},
-		"message": gortexmcp.RepoLoadingSuggestion(rec.Label()),
+		"status": "loading", "phase": phase, "percent": percent, "repos": repos, "message": message, "reason": reason,
 	})
 	var req struct {
 		ID json.RawMessage `json:"id"`

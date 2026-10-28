@@ -478,6 +478,7 @@ func (mi *MultiIndexer) markRepoRegistered(prefix, root string) {
 			}
 			records[i].commonDir = ""
 			records[i].identityPending = registered.identityPending
+			records[i].identityToken = registered.identityToken
 			if registered.identityPending {
 				records[i].Reason = registered.Reason
 			}
