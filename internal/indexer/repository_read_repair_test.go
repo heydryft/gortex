@@ -128,6 +128,15 @@ func TestRepositoryReadRepairCausesKeepReusedWireIDsDistinct(t *testing.T) {
 	}
 }
 
+func TestReadRepairPathUsesCanonicalRepositoryKey(t *testing.T) {
+	observation := newRepositoryReadRepairObservation(1, []string{filepath.FromSlash("dir/value.go")}, []*repositoryMutationWaiter{
+		{generation: 1, readRepair: &repositoryReadRepairRequest{complete: func(ReadRepairObservation) {}}},
+	})
+	if observation == nil || observation.path != "dir/value.go" {
+		t.Fatalf("native scope spelling diverged from receipt key: %+v", observation)
+	}
+}
+
 func TestRepositoryReadRepairUnobservedPathDoesNotAllocate(t *testing.T) {
 	paths := []string{"file.go"}
 	waiters := []*repositoryMutationWaiter{{generation: 1}}

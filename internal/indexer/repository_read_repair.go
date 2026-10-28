@@ -3,9 +3,12 @@ package indexer
 import (
 	"crypto/sha1" // Git blob identity, not a security decision.
 	"encoding/hex"
+	"path/filepath"
 	"strconv"
 	"time"
 	"weak"
+
+	"github.com/zzet/gortex/internal/pathkey"
 )
 
 const repositoryReadRepairCauseCap = 8
@@ -116,7 +119,7 @@ func newRepositoryReadRepairObservation(generation uint64, paths []string, waite
 		}
 		if observation == nil {
 			observation = &ReadRepairObservation{
-				generation: generation, path: paths[0], causesComplete: true,
+				generation: generation, path: pathkey.Normalize(filepath.ToSlash(paths[0])), causesComplete: true,
 			}
 		}
 		if observation.causeCount == len(observation.causes) {
