@@ -104,6 +104,13 @@ func peekFrameToolCall(frame []byte) (string, map[string]any) {
 // repoLoadingError is the refusal for a graph-backed frame from a loading
 // session. Retryable, with progress, and it never suggests tracking.
 func (d *mcpDispatcher) repoLoadingError(sess *daemon.Session, inbound []byte, rec indexer.RepoLoad) []byte {
+	if rec.State == indexer.RepoLoadIdentityPending {
+		return jsonRPCErrorFrame(inbound, "configured repository identity resolution is pending", map[string]any{
+			"error_code": string(gortexmcp.ErrCodeRepoLoading), "retryable": true, "path": sess.CWD,
+			"state": "identity_pending", "reason": "identity_pending", "phase": "identity_resolution", "percent": 0,
+			"suggestion": gortexmcp.ServerInstructionsIdentityPending(),
+		})
+	}
 	phase, percent := "starting", 0
 	if d.srv != nil {
 		phase, percent = d.srv.WarmupProgress()
@@ -142,6 +149,9 @@ func repoUnavailableError(sess *daemon.Session, inbound []byte, rec indexer.Repo
 // unbound session must see only its own, so the answer is built here rather
 // than filtered out of that snapshot.
 func (d *mcpDispatcher) loadingIndexHealth(inbound []byte, rec indexer.RepoLoad) []byte {
+	if rec.State == indexer.RepoLoadIdentityPending {
+		return d.repoLoadingError(&daemon.Session{}, inbound, rec)
+	}
 	phase, percent := "starting", 0
 	if d.srv != nil {
 		phase, percent = d.srv.WarmupProgress()

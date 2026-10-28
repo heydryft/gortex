@@ -1700,6 +1700,9 @@ func (s *Server) stateAwareInstructionsContext(ctx context.Context, cwd, base st
 			} else if serves {
 				return s.appendLiveInstructions(cwd, base)
 			}
+			if s.multiIndexer.RepoIdentityPending() {
+				return ServerInstructionsIdentityPending() + "\n\n" + base
+			}
 			roots := agents.FamilyRepoRoots(s.trackedRepoRoots(), s.multiIndexer.ConfiguredRepoRoots())
 			if agents.PendingAutomaticCheckout(cwd, roots) {
 				return ServerInstructionsPendingAutomaticCheckout(cwd, roots...)
@@ -2430,7 +2433,7 @@ func (s *Server) sessionScope(ctx context.Context) (workspaceID, projectID strin
 	// too, but only for now. Caching the sentinel would leave the session
 	// blind after the repository registers, so it is not cached: the next
 	// call resolves again.
-	if rec, pending := s.multiIndexer.PendingRepoForPath(cwd); pending && rec.State.Loading() {
+	if rec, pending := s.multiIndexer.PendingRepoForPath(cwd); (pending && rec.State.Loading()) || s.multiIndexer.RepoIdentityPending() {
 		ss.scopeResolved = false
 	}
 	ss.scopeWorkspaceID = unresolvedWorkspacePrefix + cwd

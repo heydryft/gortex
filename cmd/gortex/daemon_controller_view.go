@@ -331,6 +331,9 @@ func (c *realController) FileCoverage(ctx context.Context, p daemon.FileCoverage
 	// native tool through instead of denying the only read path left.
 	if repo, loading := c.loadingRepoForPath(abs); loading {
 		out.RepoState, out.Repo = daemon.RepoStateLoading, repo
+	} else if !out.Tracked && c.multiIndexer != nil && c.multiIndexer.RepoIdentityPending() {
+		out.RepoState = daemon.RepoStateIdentityPending
+		return out, nil // neither a negative coverage answer nor graph admission
 	}
 	if !view.servable {
 		return out, nil
@@ -429,6 +432,9 @@ func (c *realController) DirCoverage(ctx context.Context, p daemon.DirCoveragePa
 	// See FileCoverage: a loading repository's scope must not deny Grep.
 	if repo, loading := c.loadingRepoForPath(abs); loading {
 		out.RepoState, out.Repo = daemon.RepoStateLoading, repo
+	} else if !out.Tracked && c.multiIndexer != nil && c.multiIndexer.RepoIdentityPending() {
+		out.RepoState = daemon.RepoStateIdentityPending
+		return out, nil // neither a negative coverage answer nor graph admission
 	}
 	if !view.servable {
 		return out, nil

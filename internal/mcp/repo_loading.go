@@ -36,6 +36,15 @@ func ServerInstructionsLoading(repo, phase string, percent int) string {
 		"the repository is already configured.", repo, loadingPhaseLabel(phase), percent)
 }
 
+// ServerInstructionsIdentityPending describes uncertainty, not ownership of
+// the caller's path. It is shared by initialization and modern discovery.
+func ServerInstructionsIdentityPending() string {
+	return "Gortex is LOADING configured repository identities after a restart (identity_resolution, 0%). " +
+		"Graph admission for this path is not yet established; calls return repo_loading (retryable, identity_pending). " +
+		"Retry shortly or continue work natively while identity resolution completes. No graph scope has been granted; " +
+		"do not change tracking configuration or reconnect to resolve this temporary state."
+}
+
 // ServerInstructionsUnavailable is the inactive initialize variant for a
 // configured repository whose load ended without registering it.
 func ServerInstructionsUnavailable(repo, reason string) string {

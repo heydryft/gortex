@@ -499,14 +499,18 @@ func (d *mcpDispatcher) cwdReachableChecked(ctx context.Context, cwd string) (bo
 			return err == nil && reachable, err
 		}
 	}
-	rtr := d.router.Load()
-	if rtr == nil {
-		return false, nil
+	if rtr := d.router.Load(); rtr != nil {
+		lookup := rtr.LookupForCwd(cwd, "")
+		switch lookup.Source {
+		case "scope-override", "config-yaml", "roster":
+			return true, nil
+		}
 	}
-	lookup := rtr.LookupForCwd(cwd, "")
-	switch lookup.Source {
-	case "scope-override", "config-yaml", "roster":
-		return true, nil
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if d.multiIndexer != nil && d.multiIndexer.RepoIdentityPending() {
+		return false, &repoPendingAdmission{load: indexer.RepoLoad{State: indexer.RepoLoadIdentityPending}}
 	}
 	return false, nil
 }

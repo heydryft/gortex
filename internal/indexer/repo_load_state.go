@@ -329,7 +329,7 @@ func (mi *MultiIndexer) publishRepoLoadIdentity(before, resolved RepoLoad) {
 		}
 		rec := &records[i]
 		rec.canonicalKey, rec.commonDir, rec.identityPending = resolved.canonicalKey, resolved.commonDir, false
-		if rec.State.Loading() {
+		if strings.HasPrefix(rec.Reason, "identity resolution pending: ") {
 			rec.Reason = ""
 		}
 		if rec.State == RepoLoadQueued && resolved.State == RepoLoadMissing {
