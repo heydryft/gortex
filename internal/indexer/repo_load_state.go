@@ -476,7 +476,7 @@ func (mi *MultiIndexer) markRepoRegistered(prefix, root string) {
 			if registered.canonicalKey != "" {
 				records[i].canonicalKey = registered.canonicalKey
 			}
-			records[i].commonDir = ""
+			records[i].commonDir = registered.commonDir
 			records[i].identityPending = registered.identityPending
 			records[i].identityToken = registered.identityToken
 			if registered.identityPending {
@@ -562,31 +562,55 @@ func (mi *MultiIndexer) PendingRepoForPath(path string) (RepoLoad, bool) {
 	if mi == nil || path == "" {
 		return RepoLoad{}, false
 	}
-	snap := mi.repoLoads.load()
+	return mi.repoLoads.load().matchForPath(path, false)
+}
+
+// RepoLoadAdmissionForPath classifies a final negative from one immutable
+// snapshot. A matched Ready record is identity proof only: the caller must
+// recheck ordinary graph/scope authority or retry, never grant access from it.
+// An anonymous identity-pending record names no configured repository.
+func (mi *MultiIndexer) RepoLoadAdmissionForPath(path string) (RepoLoad, bool) {
+	if mi == nil || path == "" {
+		return RepoLoad{}, false
+	}
+	return mi.repoLoads.load().admissionForPath(path)
+}
+
+func (s *repoLoadSnapshot) admissionForPath(path string) (RepoLoad, bool) {
+	if rec, matched := s.matchForPath(path, true); matched {
+		return rec, true
+	}
+	if s.identityPending {
+		return RepoLoad{State: RepoLoadIdentityPending}, true
+	}
+	return RepoLoad{}, false
+}
+
+func (snap *repoLoadSnapshot) matchForPath(path string, includeReady bool) (RepoLoad, bool) {
 	if len(snap.records) == 0 {
 		return RepoLoad{}, false
 	}
 	abs := absRepoRoot(path)
 	if rec, ok := snap.enclosing(abs); ok {
-		return rec, !rec.State.Ready()
+		return rec, includeReady || !rec.State.Ready()
 	}
 	// Until the owner resolves aliases, an unmatched request cannot prove
 	// absence. Do not walk its filesystem merely to manufacture a negative.
 	if snap.identityPending {
-		if rec, ok := snap.contained(abs); ok {
+		if rec, ok := snap.contained(abs, includeReady); ok {
 			return rec, true
 		}
 		return RepoLoad{}, false
 	}
 	if canonical := pathkey.CanonicalPath(abs); canonical != abs {
 		if rec, ok := snap.enclosing(canonical); ok {
-			return rec, !rec.State.Ready()
+			return rec, includeReady || !rec.State.Ready()
 		}
 	}
-	if rec, ok := snap.contained(abs); ok {
+	if rec, ok := snap.contained(abs, includeReady); ok {
 		return rec, true
 	}
-	if snap.loading == 0 {
+	if snap.loading == 0 && !includeReady {
 		return RepoLoad{}, false
 	}
 	commonDir := enclosingWorktreeCommonDir(abs)
@@ -594,7 +618,7 @@ func (mi *MultiIndexer) PendingRepoForPath(path string) (RepoLoad, bool) {
 		return RepoLoad{}, false
 	}
 	for _, rec := range snap.records {
-		if rec.State.Loading() && rec.commonDir != "" && pathkey.EqualPaths(rec.commonDir, commonDir) {
+		if (rec.State.Loading() || (includeReady && rec.State.Ready())) && rec.commonDir != "" && pathkey.EqualPaths(rec.commonDir, commonDir) {
 			return rec, true
 		}
 	}
@@ -615,21 +639,22 @@ func (s *repoLoadSnapshot) enclosing(path string) (RepoLoad, bool) {
 	}
 }
 
-// contained finds a not-ready recorded root below path — the shape of an
+// contained finds a recorded root below path — the shape of an
 // agent opened at the directory above its repositories. A loading root wins
-// over an unavailable one, because retrying is the useful answer while any
-// repository under path can still become ready.
-func (s *repoLoadSnapshot) contained(path string) (RepoLoad, bool) {
+// over an unavailable or ready one, because retrying is useful while any
+// repository under path can still become ready. The ownership-only public
+// lookup excludes ready records; final admission includes them for rechecking.
+func (s *repoLoadSnapshot) contained(path string, includeReady bool) (RepoLoad, bool) {
 	var found RepoLoad
 	ok := false
 	for _, rec := range s.records {
-		if rec.State.Ready() || pathkey.EqualPaths(rec.Root, path) || !pathkey.HasPathPrefix(rec.Root, path) {
+		if (!includeReady && rec.State.Ready()) || pathkey.EqualPaths(rec.Root, path) || !pathkey.HasPathPrefix(rec.Root, path) {
 			continue
 		}
 		if rec.State.Loading() {
 			return rec, true
 		}
-		if !ok {
+		if !ok || (found.State.Ready() && !rec.State.Ready()) {
 			found, ok = rec, true
 		}
 	}
