@@ -850,10 +850,20 @@ func (l *CheckoutLifecycle) RecordImplicit(ctx context.Context, root string) (er
 
 // checkoutIdentity is the catalog identity of one registered checkout.
 type checkoutIdentity struct {
-	familyID    string
-	checkoutID  string
-	incarnation string
-	graphID     string
+	familyID     string
+	checkoutID   string
+	incarnation  string
+	graphID      string
+	rootIdentity checkoutRootIdentity
+}
+
+// Completed values from recordCheckout's owned discovery, not borrowed
+// FileInfo, mutable entry pointers or access to a store/lifecycle.
+type checkoutRootIdentity struct {
+	known         bool
+	canonicalRoot string
+	commonDir     string
+	plainRoot     bool
 }
 
 // recordCheckout writes the catalog rows one tracked root implies.
@@ -954,6 +964,8 @@ func (l *CheckoutLifecycle) recordCheckout(
 	if err := l.recordPathEvidence(ctx, identity.checkoutID, root, now, seeding); err != nil {
 		return identity, err
 	}
+	identity.rootIdentity = checkoutRootIdentity{known: true, canonicalRoot: root,
+		commonDir: inv.CommonDir, plainRoot: record.AdminName == gitstate.MainAdminName}
 	return identity, nil
 }
 
@@ -4264,6 +4276,7 @@ func (l *CheckoutLifecycle) Seed(ctx context.Context) error {
 				continue
 			}
 			started = stageStarted("record_checkout", zap.String("prefix", prefix))
+			identityWitness := l.mi.captureSeedIdentity(abs)
 			identity, err := l.recordCheckout(ctx, prefix, abs, TrackSourceConfig, true)
 			stageCompleted("record_checkout", started, err,
 				zap.String("prefix", prefix),
@@ -4275,6 +4288,11 @@ func (l *CheckoutLifecycle) Seed(ctx context.Context) error {
 				recordErrs = append(recordErrs, seedErr)
 			} else {
 				recorded++
+				if !l.RepositoryAdmissionClosed(prefix) {
+					// Reuse this startup owner's completed discovery before a
+					// resumed promotion asks whether configured aliases are known.
+					l.mi.publishSeedIdentity(identityWitness, prefix, identity.rootIdentity)
+				}
 			}
 			if identity.familyID != "" {
 				if _, present := seeded[identity.familyID]; !present {
