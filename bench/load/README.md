@@ -79,6 +79,27 @@ and native paired edit scenarios). This adds no hidden reader population.
 `--agents 4 --edit-agents 4` is the separate four-pure-reader/four-editor tail
 workload. The counts remain explicit in the report and workload hash.
 
+`--scenario edit-and-probe --profile agent --agents 0 --edit-agents 1
+--worktrees 0` selects the initial Go `add_intrafile_call` / `edit.file` / JSON
+accounting cell. It requires a template whose unique marker function calls the
+manifest's intrafile callee. The finite plan contains 100 precomputed Poisson
+arrivals (mean 15 seconds); `--edit-count 1` is an explicit diagnostic only.
+Each edit has its own session opened before dispatch, with independent 25 ms
+probes and immediate same-editing-session file/source readbacks. Session setup
+is outside the edit window. Future arrivals do not wait for earlier ACKs or
+probe replies. Canceled/unstarted edits remain in the offered denominator.
+
+The report retains raw call identities, independent ACK/physical/requested
+background accounting, and missing evidence. RPC return timestamps delimit
+latency; raw JSONL persistence runs on owned per-edit writers with separately
+reported encoding/write overhead. The initial tiny-fixture raw budget is
+8 MiB per edit, with a bounded queue. Exhaustion or persistence failure is
+`harness_evidence_incomplete`, never product failure or a successful check.
+Reference inputs require a reviewed evidence budget before execution. One timed
+public batch restores the file after the measurement window; unknown/pending
+mutations prevent that cleanup rewrite. This initial cell does not implement
+the paired comparison, other cells, or establish 100-edit/reference acceptance.
+
 Edit scenarios require at least one editor; zero total or negative counts are
 rejected. Zero pure readers are allowed only for `edit`/`many-edit`; `all` needs
 both populations, and other scenarios need at least one reader. Inactive editor

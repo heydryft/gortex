@@ -64,7 +64,7 @@ func runPhase(ctx context.Context, o runOptions, scenario string, corpora []Corp
 		}
 		selected = corpora
 	}
-	editing := scenario == "edit" || scenario == "many-edit"
+	editing := scenario == "edit" || scenario == "many-edit" || scenario == editProbeScenario
 	for _, corpus := range selected {
 		operations, planErr := readingPlan(corpus)
 		if planErr != nil {
@@ -81,6 +81,15 @@ func runPhase(ctx context.Context, o runOptions, scenario string, corpora []Corp
 				return phase, nil, artifacts, crashes, "", errors.New("edit scenarios require a stable unique edit_anchor and language-valid edit_template with one {{marker}} declaration")
 			}
 		}
+	}
+	if scenario == editProbeScenario {
+		plan, err := makeEditProbePlan(selected[0], o.Seed, o.EditCount)
+		if err != nil {
+			return phase, nil, artifacts, crashes, "", err
+		}
+		phase.Operations = editProbeOperations(plan, selected[0])
+		phase.EditProbe = newEditProbeReport(plan, selected[0], !o.editProbeBaseline)
+		phase.SessionModel = plan.SessionModel
 	}
 	p, err := newPrivateRun(ctx, outputRoot, o.Binary, selected)
 	if err != nil {
@@ -273,6 +282,18 @@ func runPhase(ctx context.Context, o runOptions, scenario string, corpora []Corp
 		phase.Metrics["sweep_operation_sessions"] = measured(float64(len(sweepClients)), "sessions")
 	}
 	phase.Metrics["mcp_sessions"] = measured(float64(len(clients)), "sessions")
+	if scenario == editProbeScenario {
+		runtime, probers, prepareErr := prepareEditProbe(warmCtx, o, p, clients[0], &phase)
+		clients = append(clients, probers...)
+		if runtime != nil {
+			defer func() { resultErr = errors.Join(resultErr, runtime.close()) }()
+		}
+		if prepareErr != nil {
+			return phase, sweep, artifacts, crashes, version, prepareErr
+		}
+		phase.Metrics["mcp_sessions"] = measured(float64(len(clients)), "sessions")
+		artifacts["edit_probe_raw"] = filepath.Join(p.Root, "edit-probe")
+	}
 	captureReceipt(ctx, p, clients[0], &phase)
 	sampler := newProcessSampler()
 	if o.pairedDriver != nil {
@@ -282,6 +303,15 @@ func runPhase(ctx context.Context, o runOptions, scenario string, corpora []Corp
 	}
 	if err != nil {
 		resultErr = errors.Join(resultErr, err)
+	}
+	if phase.editProbeRuntime != nil {
+		if ctx.Err() != nil {
+			resultErr = errors.Join(resultErr, errors.New("restore batch unavailable after canceled workload"))
+		} else {
+			restoreCtx, cancel := context.WithTimeout(ctx, o.Deadline)
+			resultErr = errors.Join(resultErr, phase.editProbeRuntime.restore(restoreCtx))
+			cancel()
+		}
 	}
 	if scenario == "sweep" {
 		finalizeSweepInventory(sweep, phase.Attempts, o.SweepRepetitions, &phase)
@@ -324,7 +354,9 @@ func measureStandalone(ctx context.Context, o runOptions, p *privateRun, clients
 		}
 	}
 	var err error
-	if phase.Name == "sweep" {
+	if phase.Name == editProbeScenario {
+		err = phase.editProbeRuntime.run(ctx)
+	} else if phase.Name == "sweep" {
 		sweepCtx, cancelSweep := context.WithTimeout(ctx, o.SweepBudget)
 		defer cancelSweep()
 		err = runSweep(sweepCtx, o, sweepClients, p.Repos[0], sweepRequests, sweep, phase, waitContext)

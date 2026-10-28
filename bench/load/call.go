@@ -104,13 +104,21 @@ func callToolPolicy(ctx context.Context, client toolCaller, r request, args map[
 	for retry := 0; ; retry++ {
 		start := time.Now()
 		data, err := client.call(callCtx, "tools/call", map[string]any{"name": r.Tool, "arguments": args})
+		returned := time.Now()
+		if retryTyped {
+			if clock, ok := client.(interface{ responseReturnedAt() time.Time }); ok {
+				if observed := clock.responseReturnedAt(); !observed.IsZero() && !observed.Before(start) {
+					returned = observed
+				}
+			}
+		}
 		if err == nil && callCtx.Err() != nil {
 			err = callCtx.Err()
 		}
 		if err == nil {
 			err = checkToolResult(data)
 		}
-		a := Attempt{Tool: r.name(), Role: role, Request: hash, Agent: agent, Step: step, Slot: slot, Retry: retry, Started: start, DurationMS: float64(time.Since(start)) / float64(time.Millisecond), LogicalMS: float64(time.Since(logicalStart)) / float64(time.Millisecond), Outcome: "success"}
+		a := Attempt{Tool: r.name(), Role: role, Request: hash, Agent: agent, Step: step, Slot: slot, Retry: retry, Started: start, DurationMS: float64(returned.Sub(start)) / float64(time.Millisecond), LogicalMS: float64(returned.Sub(logicalStart)) / float64(time.Millisecond), Outcome: "success"}
 		var remote *rpcError
 		if err != nil {
 			a.Outcome, a.Error = "error", err.Error()
@@ -124,6 +132,9 @@ func callToolPolicy(ctx context.Context, client toolCaller, r request, args map[
 			}
 			if callCtx.Err() != nil {
 				a.Outcome = terminalOutcome()
+			}
+			if retryTyped && errors.Is(err, errEditProbeEvidenceIncomplete) {
+				a.Outcome = "harness_incomplete"
 			}
 		}
 		attempts = append(attempts, a)

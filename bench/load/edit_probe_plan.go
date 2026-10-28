@@ -54,7 +54,7 @@ func makeEditProbePlan(c Corpus, seed int64, count int) (editProbePlan, error) {
 		return editProbePlan{}, err
 	}
 	if count != 1 && count != 100 {
-		return editProbePlan{}, errors.New("edit-and-probe requires100 edits, or explicit1-edit diagnostic")
+		return editProbePlan{}, errors.New("edit-and-probe requires 100 edits, or explicit 1-edit diagnostic")
 	}
 	if filepath.Ext(c.File) != ".go" || c.EditAnchor == "" || strings.Count(c.EditTemplate, "{{marker}}") != 1 {
 		return editProbePlan{}, errors.New("initial edit-and-probe cell requires Go/stable anchor/one marker declaration")
@@ -128,6 +128,17 @@ func (p editProbePlan) budget(deadline time.Duration, builds int) (time.Duration
 		return 0, errors.New("edit-probe run budget overflow")
 	}
 	return time.Duration(tail + drain), nil
+}
+
+func editProbeOperations(plan editProbePlan, c Corpus) []request {
+	var operations []request
+	for _, step := range plan.Steps {
+		operations = append(operations, step.Request)
+		for _, oracle := range editProbeOracles(c, step) {
+			operations = append(operations, oracle.call)
+		}
+	}
+	return operations
 }
 
 // Each finite edit task waits against the same absolute origin. A blocked ACK
