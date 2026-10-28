@@ -17,12 +17,13 @@ type EditPhaseTimings struct {
 // identify the acknowledgement's default reindex wait. It is not a phase
 // measurement or a claim of complete phase accounting.
 type EditTimingWindow struct {
-	Clock                         string   `json:"clock"`
-	Coverage                      string   `json:"coverage"`
-	AcknowledgementWallMS         *float64 `json:"ack_wall_ms"`
-	PatchWallMS                   *float64 `json:"patch_wall_ms"`
-	PublicationWallMS             *float64 `json:"publication_wall_ms"`
-	PublicationUnattributedWallMS *float64 `json:"publication_unattributed_ms"`
+	Clock                         string               `json:"clock"`
+	Coverage                      string               `json:"coverage"`
+	AcknowledgementWallMS         *float64             `json:"ack_wall_ms"`
+	PatchWallMS                   *float64             `json:"patch_wall_ms"`
+	PatchAccounting               *EditPatchAccounting `json:"patch_accounting,omitempty"`
+	PublicationWallMS             *float64             `json:"publication_wall_ms"`
+	PublicationUnattributedWallMS *float64             `json:"publication_unattributed_ms"`
 }
 
 var editAckPhaseNames = [...]string{
@@ -63,6 +64,7 @@ func (s PublicationPhaseSnapshot) EditTimings() EditPhaseTimings {
 		// P is independent of receipt/ACK lifetime and may finish later.
 		ms := float64(s.attemptWindow.endNS-s.attemptWindow.startNS) / 1e6
 		out.Window.PatchWallMS = &ms
+		out.Window.PatchAccounting = s.attemptWindow.projectAccounting()
 	}
 	offsets := make(map[PublicationPhase]int64, len(s.Phases))
 	for _, phase := range s.Phases {

@@ -112,8 +112,10 @@ func (p *canonicalPatchLaps) endLapLocked(lap canonicalPatchLap, start, at time.
 	v := &p.laps[lap]
 	if at.IsZero() || at.Before(start) || p.active != 1 || p.activeKind != lap || !p.activeStarted.Equal(start) {
 		p.invalid = true
+	} else if elapsed := at.Sub(start); elapsed < 0 || v.total > time.Duration(1<<63-1)-elapsed {
+		p.invalid = true
 	} else {
-		v.total += at.Sub(start)
+		v.total += elapsed
 	}
 	v.last = at
 	v.done++

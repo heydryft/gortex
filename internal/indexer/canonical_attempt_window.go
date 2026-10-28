@@ -18,6 +18,7 @@ type canonicalPointTimer struct {
 type canonicalAttemptWindow struct {
 	startNS, endNS int64
 	retry          int
+	accounting     canonicalAttemptEvidence
 }
 
 func (p *pointPublicationAttempt) finishPhysicalAttempt(start, end time.Time, retry int, logger *zap.Logger) {
@@ -30,7 +31,8 @@ func (p *pointPublicationAttempt) finishPhysicalAttempt(start, end time.Time, re
 		zap.String("publication_key", p.record.Key()),
 		zap.Uint64("attempt_ticket", p.stamps.patchLaps.ticket),
 		zap.Int("attempt_retry", window.retry),
-		zap.Float64("attempt_wall_ms", float64(window.endNS-window.startNS)/1e6))
+		zap.Float64("attempt_wall_ms", float64(window.endNS-window.startNS)/1e6),
+		zap.Object("attempt_accounting", window))
 }
 
 func (p *PublicationPhaseRecord) completePhysicalAttempt(stamps *PublicationStamps, start, end time.Time, retry int) (canonicalAttemptWindow, bool) {
@@ -46,9 +48,19 @@ func (p *PublicationPhaseRecord) completePhysicalAttempt(stamps *PublicationStam
 	hasCycle := false
 	valid := stamps.patchLaps != nil
 	var ticket uint64
+	var lateDeep canonicalPatchEvidence
+	var lateAdmissions canonicalAdmissionEvidence
+	var lateLane canonicalLaneWaitEvidence
 	if valid {
 		stamps.patchLaps.finishAttemptControlLocked(end)
 		ticket = stamps.patchLaps.ticket
+		lateDeep = stamps.patchLaps.freeze(p.origin)
+		lateAdmissions = stamps.freezeCanonicalAdmissions(p.origin)
+		lateLane = stamps.laneWait.freeze(p.origin)
+		window.accounting = stamps.freezeAttemptEvidence(p.origin)
+		if window.accounting.observed && (window.accounting.startNS != window.startNS || window.accounting.endNS != window.endNS) {
+			valid = false
+		}
 	}
 	for _, mark := range stamps.marks {
 		if mark.phase == PublicationCycleStarted {
@@ -81,6 +93,13 @@ func (p *PublicationPhaseRecord) completePhysicalAttempt(stamps *PublicationStam
 	for _, mark := range p.marks {
 		if mark.phase == PublicationTicketFailed {
 			return unavailable, false
+		}
+	}
+	if window.accounting.observed {
+		if p.patchLaps == nil || *p.patchLaps != lateDeep || p.admissions == nil || *p.admissions != lateAdmissions ||
+			(p.laneWait == nil && (lateLane.started || lateLane.invalid)) || (p.laneWait != nil && *p.laneWait != lateLane) ||
+			!window.accounting.agreesWithAdmissions(lateAdmissions, lateLane) {
+			window.accounting.invalid = true
 		}
 	}
 	p.attemptWindow = &window // a fresh immutable observation, including after terminal

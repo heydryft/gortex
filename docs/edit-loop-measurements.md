@@ -8,6 +8,26 @@ same immutable snapshot, with no new graph/store queries or edit-path I/O.
 This is partial instrumentation. Presence of every key does **not** mean every
 lap has been measured, or that the phase-sum acceptance criterion is met.
 
+The optional `phase_timing.patch_accounting` object is a separate partition of
+one exact accepted winning physical attempt P. Its actual setup, inspection,
+executor-control and finalization intervals pause around the same actual
+admission/lane/deep operations. `patch_analysis` names the observed dataflow,
+affected-plan and reference-fact block; resolver meaning stays unchanged. This
+uses fixed ordered scalar state, never elapsed-minus-known work or interval
+history. Early deep snapshots/logs remain immutable and executor-contained while
+outer finalization is open. The actual-return completion publishes a fresh copy
+only after exact winner/membership and agreement checks with those early values.
+
+`observed_partition_complete` requires valid integer bounds, all applicable
+requested deep laps and a disjoint complete P partition. Missing deep evidence
+fails it even if broad control totals numerically fill the wall. `sum_state`
+remains `partial` for a valid local partition pending actual acceptance tests;
+`missing_laps`, `unclassified_gap`, `invalid_order` and `not_observed` explain
+refusals. The residual is diagnostic. Initial quiet/retry backoff, dispatcher
+queueing and discarded attempts are not part of this smaller winning-P wall.
+Its `background_coverage` remains `not_established`: it does not establish full
+per-edit background, ACK, actual100-edit or5%/performance acceptance.
+
 ## Duration evidence
 
 `phases_ms` always lists these keys for a found mutation receipt:
