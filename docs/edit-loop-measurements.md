@@ -240,10 +240,24 @@ alive. A late handler can finish its call-scoped observation but cannot reinstal
 it on an evicted record. Raw/unobserved writes have no MCP acknowledgement.
 
 The ownership does not attach pointers to `batchTransactions`, whose existing
-map has no bounded eviction. Dispatcher queue/preamble are explicitly
-unavailable pending the shared admission interface; actual parse/disk/enqueue
+map has no bounded eviction. Actual parse/disk/enqueue
 laps and additive-sum validation are partial work. It does not change the validated actual-completion counters or CPU/WAL
 sampling. Read/native-path and mutation overhead still require measurement.
+
+The daemon's existing allocated slot lease now retains immutable original
+admission-entry and actual channel-grant endpoints. A source-tool observer
+copies them once; no context, registry, classifier or per-tool transport parse
+is added. Replay/cache followers and unbounded/no-lease paths have no grant
+observation. Releasing capacity or attaching another grant cannot replace the
+original pair; a refused first attempt cannot borrow a later attempt's grant.
+Nil-lease primitives sample no clock. Successfully admitted leased requests,
+including reads, add two monotonic clock samples and existing-lease mutex work;
+that overhead is unmeasured, with a primitive benchmark supplied for later
+measurement rather than a performance claim. Current HTTP paths without that
+admission lease remain unavailable. Private queue and grant-to-observer
+preamble snapshots precede the bound-call origin: scoped wire exposure is
+separate pending work, and they must never be added to its existing subtotal
+or silently widen its wall. No dispatcher policy or capacity changes here.
 
 The private fixed acknowledgement accumulator now observes the actual pre-write
 parse-gate call in `edit_file`/`write_file`, the `AtomicWriteFile` call (ending

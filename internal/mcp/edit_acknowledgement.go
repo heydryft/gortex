@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+
+	"github.com/zzet/gortex/internal/daemon"
 )
 
 // This is a call-scoped private observation, not retained receipt history. In
@@ -14,15 +16,17 @@ import (
 // Its origin precedes boundHandler, not the dispatcher/transport or the legacy
 // publication origin at middleware entry. No graph work is inferred from it.
 type editAcknowledgement struct {
-	owner    *Server
-	id       uint64
-	entered  time.Time
-	mu       sync.Mutex
-	actual   time.Time
-	reply    time.Time
-	outcome  string
-	laps     editAcknowledgementLaps
-	envelope editAcknowledgementEnvelope
+	owner       *Server
+	id          uint64
+	entered     time.Time
+	mu          sync.Mutex
+	actual      time.Time
+	reply       time.Time
+	outcome     string
+	laps        editAcknowledgementLaps
+	envelope    editAcknowledgementEnvelope
+	dispatch    daemon.MCPDispatchTiming
+	hasDispatch bool
 }
 
 type editAcknowledgementKey struct{}
@@ -84,7 +88,8 @@ func (s *Server) withEditAcknowledgement(ctx context.Context) (context.Context, 
 	if existing := editAcknowledgementFrom(ctx, s); existing != nil {
 		return ctx, existing, false
 	}
-	ack := &editAcknowledgement{owner: s, id: editAcknowledgementSequence.Add(1), entered: time.Now()}
+	dispatch, hasDispatch := daemon.MCPDispatchTimingForContext(ctx)
+	ack := &editAcknowledgement{owner: s, id: editAcknowledgementSequence.Add(1), entered: time.Now(), dispatch: dispatch, hasDispatch: hasDispatch}
 	return context.WithValue(ctx, editAcknowledgementKey{}, ack), ack, true
 }
 
@@ -138,6 +143,14 @@ func (a *editAcknowledgement) snapshot() editAcknowledgementSnapshot {
 	result.TicketAdmission = laps.snapshot(editAckTicketAdmission, a.entered, reply, actual)
 	result.ReindexWait = laps.snapshot(editAckReindexWait, a.entered, reply, actual)
 	result.LapsDisjoint = !laps.overlap
+	if a.hasDispatch {
+		if a.dispatch.Granted.Before(a.dispatch.Entered) || a.entered.Before(a.dispatch.Granted) {
+			result.DispatcherQueueState, result.DispatcherState = "invalid_interval", "invalid_interval"
+		} else {
+			result.DispatcherQueueMS, result.DispatcherQueueState = editAcknowledgementWall(a.dispatch.Entered, a.dispatch.Granted)
+			result.DispatcherPreambleMS, result.DispatcherState = editAcknowledgementWall(a.dispatch.Granted, a.entered)
+		}
+	}
 	result.Middleware, result.ReplyPrepare = envelope.snapshot(a.entered, reply, actual)
 	// These outer intervals surround, rather than contain, the leaf's fixed
 	// operation laps. A misplaced operation must not produce a plausible sum.
