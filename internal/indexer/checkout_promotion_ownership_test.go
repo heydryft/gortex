@@ -105,8 +105,11 @@ func TestPromotionPurgeRejectsAReplacedRegistration(t *testing.T) {
 	// Retire through the lifecycle so the exact old reader/publisher admission
 	// is finalized before installing a replacement. Deleting only the registry
 	// and catalog row must not bypass that owner's admission tombstone.
-	_, err = f.lc.Untrack(t.Context(), first)
+	retired, err := f.lc.Untrack(t.Context(), first)
 	require.NoError(t, err)
+	if retired.Pending {
+		finishRepositoryCleanup(t, f.lc, "src")
+	}
 	_, found, err := f.catalog.GetDedicatedGraph(t.Context(), GraphIDFor("src"))
 	require.NoError(t, err)
 	require.False(t, found)
