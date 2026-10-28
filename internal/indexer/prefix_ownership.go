@@ -249,6 +249,43 @@ func (mi *MultiIndexer) registeredPrefixForExactRoot(ctx context.Context, reques
 		prefixStatResult{err: errPrefixIdentityUnknown})
 }
 
+// prefixOwnerForRoot is stricter than a same-root registration under ANY name:
+// promotion and rollback need this specific prefix's corpus to be the root's.
+func (mi *MultiIndexer) prefixOwnerForRoot(ctx context.Context, prefix, root string) (prefixOwnerWitness, error) {
+	observation, err := mi.observePrefixOwnership(ctx, prefix, root)
+	if err != nil {
+		return prefixOwnerWitness{}, err
+	}
+	owner := observation.snapshot.owner
+	if owner.meta != nil && (owner.root == root || observation.registeredPrefix == prefix) {
+		return owner, nil
+	}
+	return prefixOwnerWitness{}, newObservedPrefixCollision(prefix, owner.root, root, observation.owner)
+}
+
+// Callers hold mi.mu. The comparison is memory-only, including the original
+// immutable root string; no availability probe runs while closing admission.
+func (mi *MultiIndexer) validatePrefixCleanupOwnerLocked(prefix string, expected *prefixOwnerWitness) error {
+	if expected == nil {
+		return nil // ordinary authoritative untrack keeps its existing contract
+	}
+	current := mi.repos[prefix]
+	if current != nil && current != expected.meta {
+		if current.RootPath != expected.root {
+			return newObservedPrefixCollision(prefix, current.RootPath, expected.root, prefixStatResult{err: errPrefixOwnerChanged})
+		}
+		return errPrefixOwnerChanged
+	}
+	owned := current
+	if state := mi.pendingRepositoryUntracks[prefix]; state != nil {
+		owned = state.metadata // retained cleanup owns this immutable snapshot
+	}
+	if prefix != expected.prefix || owned == nil || owned != expected.meta || owned.RootPath != expected.root {
+		return errPrefixOwnerChanged
+	}
+	return nil
+}
+
 func sameObservedDirectory(a, b prefixStatResult) bool {
 	return a.err == nil && b.err == nil && a.info != nil && b.info != nil &&
 		a.info.IsDir() && b.info.IsDir() && os.SameFile(a.info, b.info)

@@ -389,6 +389,9 @@ type CheckoutLifecycle struct {
 	// registry ownership can disappear after a nil Track result and before
 	// checkout recording. It does not replace the real track implementation.
 	afterRegisterTrack func()
+	// afterPromotionIndex schedules an ownership change after the real index
+	// and before publication. Nil in production; it does not replace indexing.
+	afterPromotionIndex func()
 	// routeBarrier stands in for the route withdrawal a promotion runs after
 	// the mode flip, which is the one write no fixture can make the catalog
 	// refuse. A test seam; nil in production.
