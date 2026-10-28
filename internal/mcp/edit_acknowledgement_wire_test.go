@@ -188,14 +188,14 @@ func TestAtomicBatchResponseAndStatusExposeOnlyBoundedTimingReference(t *testing
 	result, err = h(t.Context(), compact)
 	require.NoError(t, err)
 	require.Contains(t, result.Content[0].(mcp.TextContent).Text, "acknowledgement_receipt="+id)
-	status.Params.Arguments["format"] = "toon"
+	status.Params.Arguments = map[string]any{"receipt": id, "format": "toon"}
 	result, err = s.handleMutationStatus(t.Context(), status)
 	require.NoError(t, err)
 	require.Contains(t, result.Content[0].(mcp.TextContent).Text, "shared_rpc_mcp_bound_call")
 	for i := range maxMutationCommits {
 		s.mutationCommits.put(&mutationCommitRecord{id: fmt.Sprintf("wire-batch-cap-%d", i), startedAt: time.Now()})
 	}
-	status.Params.Arguments["format"] = "json"
+	status.Params.Arguments = map[string]any{"receipt": id, "format": "json"}
 	result, err = s.handleMutationStatus(t.Context(), status)
 	unavailable := decodeAcknowledgementResult(t, result, err)
 	require.Equal(t, false, unavailable["found"])
