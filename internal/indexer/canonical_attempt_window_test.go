@@ -34,7 +34,7 @@ func TestCanonicalAttemptWindowFinishesAfterDoneAndCohortRelease(t *testing.T) {
 	require.Nil(t, earlyTimings.Window.PatchWallMS, "actual return is still blocked on cohort release")
 	require.Empty(t, logs.FilterMessage("graph patch attempt complete").All())
 	completedNS := phaseOffsets(early)[PublicationTicketCompleted]
-	require.Eventually(t, func() bool { return time.Now().Sub(record.origin).Nanoseconds() > completedNS },
+	require.Eventually(t, func() bool { return time.Since(record.origin).Nanoseconds() > completedNS },
 		5*time.Second, time.Millisecond, "the held cohort cannot return until the observed clock advances past Done")
 	releaseAt := time.Now()
 	unblock()

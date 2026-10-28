@@ -182,9 +182,15 @@ func TestRepositoryReadRepairCompletionIsOutsideCoordinatorLocks(t *testing.T) {
 				complete: func(observation ReadRepairObservation) {
 					// Both operations would deadlock if completion still owned
 					// coordinator.mu or the repository mutation lane.
-					coordinator.mu.Lock()
+					if !coordinator.mu.TryLock() {
+						t.Error("completion still owns coordinator lock")
+						return
+					}
 					coordinator.mu.Unlock()
-					batchGate.Lock()
+					if !batchGate.TryLock() {
+						t.Error("completion still owns batch lock")
+						return
+					}
 					batchGate.Unlock()
 					if laneErr := coordinator.runExclusive(context.Background(), func() error { return nil }); laneErr != nil {
 						panic(laneErr)
