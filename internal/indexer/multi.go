@@ -2850,6 +2850,9 @@ func (mi *MultiIndexer) prepareTrackRepoContext(ctx context.Context, entry confi
 	candidate := mi.prefixStats.observe(statCtx, absPath)
 	cancelStat()
 	if candidate.err != nil {
+		if errors.Is(candidate.err, os.ErrNotExist) {
+			return nil, fmt.Errorf("path does not exist: %s: %w", absPath, candidate.err)
+		}
 		return nil, fmt.Errorf("cannot inspect repository path %s: %w", absPath, candidate.err)
 	}
 	if candidate.info == nil || !candidate.info.IsDir() {
@@ -3067,6 +3070,9 @@ func (mi *MultiIndexer) ReconcileRepoCtx(ctx context.Context, entry config.RepoE
 	candidate := mi.prefixStats.observe(statCtx, absPath)
 	cancelStat()
 	if candidate.err != nil {
+		if errors.Is(candidate.err, os.ErrNotExist) {
+			return nil, fmt.Errorf("path does not exist: %s: %w", absPath, candidate.err)
+		}
 		return nil, fmt.Errorf("cannot inspect repository path %s: %w", absPath, candidate.err)
 	}
 	if candidate.info == nil || !candidate.info.IsDir() {
