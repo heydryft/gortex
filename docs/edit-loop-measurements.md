@@ -228,9 +228,15 @@ Missing endpoints stay pending, missing origins stay unavailable and invalid
 ordering stays invalid; none becomes measured zero. Snapshots own their scalar
 values and never evaluate a live clock during formatting.
 
-This first ownership slice does not publish acknowledgement wire fields or
-retain a history. It does not attach pointers to `batchTransactions`, whose
-existing map has no bounded eviction. Dispatcher queue/preamble are explicitly
+Physical file receipts written by one RPC now share that private observation
+through the existing bounded mutation ledger. Both expiry and capacity eviction
+clear the reference, even when pending-source evidence keeps the physical receipt
+alive. A late handler can finish its call-scoped observation but cannot reinstall
+it on an evicted record. Raw/unobserved writes have no MCP acknowledgement.
+
+This ownership slice does not publish acknowledgement wire fields. It does not
+attach pointers to `batchTransactions`, whose existing map has no bounded
+eviction. Dispatcher queue/preamble are explicitly
 unavailable pending the shared admission interface; actual parse/disk/enqueue
 laps, bounded receipt attachment and additive-sum validation are subsequent
 work. It does not change the validated actual-completion counters or CPU/WAL

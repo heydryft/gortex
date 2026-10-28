@@ -141,6 +141,10 @@ type mutationCommitRecord struct {
 	// Request-wide first-wins stamps cannot identify a second file's write.
 	diskWriteStartedAt time.Time
 	publication        *indexer.PublicationPhaseRecord
+	// Files written by one measured RPC share one acknowledgement, retained
+	// only while this record belongs to the bounded ledger. Pending-source
+	// evidence can outlive that ownership, so eviction must clear this too.
+	acknowledgement *editAcknowledgement
 
 	// response is the successful tool payload, retained only for records that
 	// carry a caller-chosen mutation_id. Without a key there is nothing to
@@ -446,6 +450,7 @@ func (l *mutationCommitLedger) evictLocked(now time.Time) {
 		if expired {
 			record.mu.Lock()
 			record.publication = nil
+			record.acknowledgement = nil
 			record.mu.Unlock()
 			delete(l.byID, record.id)
 			if record.key != "" && l.byKey[record.key] == record {
@@ -462,6 +467,7 @@ func (l *mutationCommitLedger) evictLocked(now time.Time) {
 		oldest.mu.Lock()
 		l.unbindFreshnessLocked(oldest)
 		oldest.publication = nil
+		oldest.acknowledgement = nil
 		oldest.mu.Unlock()
 		delete(l.byID, oldest.id)
 		if oldest.key != "" && l.byKey[oldest.key] == oldest {
@@ -602,8 +608,9 @@ func (s *Server) beginMutationCommit(ctx context.Context, tool, mutationID, fing
 		disk:        mutationDiskInFlight,
 		// Seed, not an outcome: graphRecorded stays false until something
 		// reports back, and that is what makes the difference visible.
-		graph:     mutationGraphStale,
-		startedAt: time.Now(),
+		graph:           mutationGraphStale,
+		startedAt:       time.Now(),
+		acknowledgement: editAcknowledgementFrom(ctx, s),
 	}
 	if state := checkoutMutationFromContext(ctx); state != nil {
 		record.checkoutID = state.checkoutID

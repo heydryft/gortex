@@ -27,6 +27,15 @@ type editAcknowledgementKey struct{}
 
 var editAcknowledgementSequence atomic.Uint64
 
+// A status call may borrow this pointer long enough to copy a snapshot. It
+// never installs one: eviction clears the record's ownership even when other
+// pending-source evidence still retains the physical commit record.
+func retainedMutationAcknowledgement(record *mutationCommitRecord) *editAcknowledgement {
+	record.mu.RLock()
+	defer record.mu.RUnlock()
+	return record.acknowledgement
+}
+
 // The two walls deliberately overlap: they are diagnostic alternatives, never
 // additive laps. A detached handler can finish after the reply wall froze.
 // Snapshot values own their scalar pointers; no encoder samples a live clock.
