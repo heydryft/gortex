@@ -348,9 +348,9 @@ func TestDeclareRepos_WarmupEnrichmentPreservesRunningState(t *testing.T) {
 	root, worktree := linkedWorktreeLayout(t)
 	entries := []config.RepoEntry{{Path: root}}
 	mi.DeclareRepos(entries)
-	rec, pending := mi.PendingRepoForPath(filepath.Join(worktree, "pkg"))
-	require.True(t, pending, "a primary declaration must cover independently resolved linked-worktree markers")
-	assert.Equal(t, root, rec.Root)
+	_, pending := mi.PendingRepoForPath(filepath.Join(worktree, "pkg"))
+	require.False(t, pending, "an unresolved declaration cannot name the worktree's family without request filesystem work")
+	require.True(t, mi.RepoIdentityPending(), "negative startup admission must remain generically retryable until the owner resolves identity")
 
 	mi.StartRepoLoad(root)
 	before, _ := mi.RepoLoadFor(root)
@@ -360,8 +360,9 @@ func TestDeclareRepos_WarmupEnrichmentPreservesRunningState(t *testing.T) {
 	assert.Equal(t, RepoLoadRunning, after.State)
 	assert.Equal(t, before.Since, after.Since)
 	assert.False(t, after.identityPending)
-	_, pending = mi.PendingRepoForPath(worktree)
+	rec, pending := mi.PendingRepoForPath(worktree)
 	assert.True(t, pending)
+	assert.Equal(t, root, rec.Root, "the owner now proves the linked worktree's configured family")
 
 	mi.DeclareRepos(nil)
 	assert.Empty(t, mi.RepoLoads(), "removed declarations must not remain loading forever")
