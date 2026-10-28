@@ -466,7 +466,7 @@ func (r *editProbeRuntime) doEdit(ctx context.Context, step editProbeStep) {
 					s.mu.Unlock()
 					break
 				}
-				if terminal && all && (!r.requireAccounting || accounting.State == "observed_single_window_checks_pass") {
+				if editProbeFinished(terminal, all, r.requireAccounting, accounting) {
 					break
 				}
 			}

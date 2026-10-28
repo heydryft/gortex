@@ -99,6 +99,10 @@ Reference inputs require a reviewed evidence budget before execution. One timed
 public batch restores the file after the measurement window; unknown/pending
 mutations prevent that cleanup rewrite. This initial cell does not implement
 the paired comparison, other cells, or establish 100-edit/reference acceptance.
+An owner-matching immutable physical return with explicitly missing or invalid
+deep laps ends that edit as failed coverage once its graph and read evidence
+have arrived. Receipt terminality alone still waits for late physical evidence;
+a complete physical partition also continues waiting for late background data.
 
 Edit scenarios require at least one editor; zero total or negative counts are
 rejected. Zero pure readers are allowed only for `edit`/`many-edit`; `all` needs

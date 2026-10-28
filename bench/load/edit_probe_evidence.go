@@ -244,6 +244,8 @@ func checkEditProbeAccounting(status map[string]any, receipt string) editProbeAc
 		out.A = &a
 	}
 	original, _ := status["phase_timing"].(map[string]any)
+	publication, _ := status["publication_phases"].(map[string]any)
+	ownerKnown := status["receipt"] == receipt && requested > 0 && applied >= requested
 	physical := original
 	if applied > requested {
 		if original["patch_wall_ms"] != nil || original["patch_accounting"] != nil {
@@ -256,8 +258,10 @@ func checkEditProbeAccounting(status map[string]any, receipt string) editProbeAc
 		ticket, _ := strconvEditProbeUint(pub["ticket"])
 		originalPublication, _ := status["publication_phases"].(map[string]any)
 		if wReq != requested || wApplied != applied || ticket != applied || winner["scope"] != "independent_physical_winner_serving_coalesced_receipt" || pub["source"] != "canonical_coalesced_attempt" || pub["key"] == originalPublication["key"] {
+			ownerKnown = false
 			fail("independent serving identity mismatch")
 		}
+		publication = pub
 		timings, _ := winner["timings"].(map[string]any)
 		physical, _ = timings["phase_timing"].(map[string]any)
 	}
@@ -308,8 +312,35 @@ func checkEditProbeAccounting(status map[string]any, receipt string) editProbeAc
 	}
 	if len(out.Reasons) == 0 {
 		out.State = "observed_single_window_checks_pass"
+	} else if ownerKnown && editProbeImmutablePartialPhysical(physical, publication, applied) {
+		out.State = "terminal_partial_physical"
 	}
 	return out
+}
+
+// Receipt terminality can precede the actual serving return. Only the immutable
+// late window proves that missing deep laps cannot arrive. A complete P with
+// absent B must still wait: background publication follows physical publication.
+func editProbeImmutablePartialPhysical(physical, publication map[string]any, applied uint64) bool {
+	if _, err := editProbeNS(physical["patch_wall_ms"]); err != nil || physical["clock"] != "monotonic" || publication["clock"] != "monotonic" || publication["terminal"] != true {
+		return false
+	}
+	key, _ := publication["key"].(string)
+	ticket, err := strconvEditProbeUint(publication["ticket"])
+	if key == "" || err != nil || ticket != applied || (publication["source"] != "mcp_edit" && publication["source"] != "canonical_coalesced_attempt") {
+		return false
+	}
+	accounting, _ := physical["patch_accounting"].(map[string]any)
+	owner, err := strconvEditProbeUint(accounting["attempt_ticket"])
+	_, retryErr := strconvEditProbeUint(accounting["attempt_retry"])
+	if err != nil || owner != applied || retryErr != nil || accounting["scope"] != "accepted_winning_physical_attempt" || accounting["observed_partition_complete"] != false {
+		return false
+	}
+	return accounting["sum_state"] == "missing_laps" || accounting["sum_state"] == "invalid_order"
+}
+
+func editProbeFinished(graphTerminal, allCorrect, requireAccounting bool, accounting editProbeAccounting) bool {
+	return graphTerminal && allCorrect && (!requireAccounting || accounting.State == "observed_single_window_checks_pass" || accounting.State == "terminal_partial_physical")
 }
 
 var requestedBackgroundLapNamesForProbe = []string{"scheduling_admission_setup", "initial_timer_arm", "canceled_quiet_wait", "timer_stop", "coalescing_control", "successor_timer_arm", "successor_quiet_wait"}
