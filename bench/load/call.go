@@ -54,9 +54,10 @@ func checkToolResult(data json.RawMessage) error {
 		return errors.New("tool returned isError without error content")
 	}
 	var body struct {
-		Code      string `json:"error_code"`
-		Message   string `json:"message"`
-		Retryable bool   `json:"retryable"`
+		Code      string         `json:"error_code"`
+		Message   string         `json:"message"`
+		Retriable bool           `json:"retriable"`
+		Data      map[string]any `json:"data"`
 	}
 	if err := json.Unmarshal(payload, &body); err != nil {
 		return err
@@ -65,7 +66,7 @@ func checkToolResult(data json.RawMessage) error {
 	if body.Code == "invalid_argument" {
 		code = -32602
 	}
-	return &rpcError{Code: code, Message: body.Code + ": " + body.Message, Retryable: body.Retryable}
+	return &rpcError{Code: code, Message: body.Code + ": " + body.Message, Data: body.Data, Retriable: body.Code == "repo_loading" && body.Retriable}
 }
 
 type toolCaller interface {
@@ -116,9 +117,9 @@ func callToolPolicy(ctx context.Context, client toolCaller, r request, args map[
 			if errors.As(err, &remote) {
 				a.Code = remote.Code
 			}
-			if remote != nil && remote.Code == -32002 {
+			if remote != nil && remote.Code == -32002 && (!retryTyped || remote.retryEditProbe()) {
 				a.Outcome = "busy"
-			} else if retryTyped && remote != nil && remote.Retryable {
+			} else if retryTyped && remote != nil && remote.retryEditProbe() {
 				a.Outcome = "retryable"
 			}
 			if callCtx.Err() != nil {

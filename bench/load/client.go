@@ -17,12 +17,26 @@ import (
 const maxWireBytes = 64 << 20
 
 type rpcError struct {
-	Code      int    `json:"code"`
-	Message   string `json:"message"`
-	Retryable bool   `json:"retryable,omitempty"`
+	Code      int            `json:"code"`
+	Message   string         `json:"message"`
+	Data      map[string]any `json:"data,omitempty"`
+	Retriable bool           `json:"-"` // typed tool-result refusal, not a JSON-RPC top-level field
 }
 
 func (e *rpcError) Error() string { return fmt.Sprintf("RPC %d: %s", e.Code, e.Message) }
+
+func (e *rpcError) retryEditProbe() bool {
+	if unknown, _ := e.Data["delivery_unknown"].(bool); unknown {
+		return false
+	}
+	// These are actual front-door shapes: dispatcher -32002 in
+	// mcp_request_lifetime.go, and repo_loading data in
+	// cmd/gortex/daemon_mcp_repo_loading.go. Unknowns stay terminal.
+	if e.Code == -32002 {
+		return true
+	}
+	return e.Retriable || e.Code == -32000 && e.Data["error_code"] == "repo_loading" && e.Data["retryable"] == true
+}
 
 type wireReply struct {
 	ID     json.Number     `json:"id"`
