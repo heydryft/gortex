@@ -29,6 +29,9 @@ func (s *Server) handleMutationStatus(ctx context.Context, req mcp.CallToolReque
 	case receipt != "":
 		record, ok := s.mutationCommits.byReceipt(receipt)
 		if !ok {
+			if payload, handled := s.batchAcknowledgementReceiptPayload(ctx, receipt); handled {
+				return s.respondJSONOrTOON(ctx, req, payload)
+			}
 			if payload, found := s.graphRefreshReceiptPayload(ctx, receipt); found {
 				return s.respondJSONOrTOON(ctx, req, payload)
 			}
@@ -139,13 +142,21 @@ func (s *Server) graphRefreshReceiptPayload(ctx context.Context, id string) (map
 		payload["error"] = outcome.Err.Error()
 	}
 	var retained *indexer.PublicationPhaseRecord
+	var acknowledgement *editAcknowledgementSnapshot
+	acknowledgementState := "not_applicable"
 	if commit, found := s.mutationCommits.byFreshnessReceipt(receipt.id); found && mutationCommitInScope(ctx, commit) {
+		acknowledgementState = "unavailable_recording_or_evicted"
 		retained, _ = retainedMutationPublication(commit)
+		if ack := retainedMutationAcknowledgement(commit); ack != nil {
+			snapshot := ack.snapshot()
+			acknowledgement = &snapshot
+		}
 		if retained != nil && retained.Key() != receipt.id {
 			retained = nil
 		}
 	}
 	attachMutationPhaseTimings(payload, receipt.id, time.Time{}, indexer.PublicationSourceFreshRequest, retained)
+	attachAcknowledgementPayload(payload, acknowledgement, acknowledgementState)
 	return payload, true
 }
 
@@ -222,6 +233,12 @@ func (s *Server) mutationStatusPayload(record *mutationCommitRecord) map[string]
 	payload["guidance"] = mutationStatusGuidance(snap.DiskStatus)
 	retained, committedAt := retainedMutationPublication(record)
 	attachMutationPhaseTimings(payload, snap.ReindexReceipt, committedAt, indexer.PublicationSourceMCPEdit, retained)
+	var acknowledgement *editAcknowledgementSnapshot
+	if ack := retainedMutationAcknowledgement(record); ack != nil {
+		snapshot := ack.snapshot()
+		acknowledgement = &snapshot
+	}
+	attachAcknowledgementPayload(payload, acknowledgement, "unavailable_recording_or_evicted")
 	return payload
 }
 

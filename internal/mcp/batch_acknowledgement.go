@@ -4,6 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"strconv"
+	"strings"
+
+	"github.com/zzet/gortex/internal/indexer"
 )
 
 // bindBatchAcknowledgement belongs exclusively to runBatchTransaction's first
@@ -20,7 +23,7 @@ func (s *Server) bindBatchAcknowledgement(ctx context.Context, state *batchTrans
 		return
 	}
 	id := "batch-ack-" + strconv.FormatUint(ack.id, 10)
-	transactionID := state.receipt.TransactionID
+	transactionID, checkoutID, incarnation := state.receipt.TransactionID, state.receipt.CheckoutID, state.receipt.Incarnation
 	state.acknowledgementReceipt = id
 	state.mu.Unlock()
 	// No state lock crosses the existing ledger's eviction or record locks.
@@ -29,7 +32,76 @@ func (s *Server) bindBatchAcknowledgement(ctx context.Context, state *batchTrans
 	s.mutationCommits.put(&mutationCommitRecord{
 		kind: batchAcknowledgementCommit, id: id, startedAt: ack.entered,
 		acknowledgement: ack, batchOwner: sha256.Sum256([]byte(transactionID)),
+		checkoutID: checkoutID, checkoutIncarnation: incarnation,
 	})
+}
+
+// A batch timing receipt is a separate explicit status variant. It carries no
+// physical disk/graph verdict and never routes through byReceipt/replay/source
+// evidence. The durable transaction remains the authority for those outcomes.
+func (s *Server) batchAcknowledgementReceiptPayload(ctx context.Context, id string) (map[string]any, bool) {
+	if !strings.HasPrefix(id, "batch-ack-") {
+		return nil, false
+	}
+	checkoutID, incarnation := mutationCheckoutScope(ctx)
+	ledger := &s.mutationCommits
+	ledger.mu.Lock()
+	record := ledger.byID[id]
+	var ack *editAcknowledgement
+	if record != nil && record.kind == batchAcknowledgementCommit &&
+		mutationCheckoutScopeMatches(checkoutID, incarnation, record.checkoutID, record.checkoutIncarnation) {
+		record.mu.RLock()
+		ack = record.acknowledgement
+		record.mu.RUnlock()
+	}
+	ledger.mu.Unlock()
+	payload := map[string]any{
+		"found": ack != nil, "receipt": id, "receipt_kind": "batch_acknowledgement",
+		"guidance": "timing only; query the batch transaction_id for its durable source and graph outcomes",
+	}
+	timings := (indexer.PublicationPhaseSnapshot{}).EditTimings()
+	payload["phases_ms"], payload["phase_states"], payload["phase_timing"] = timings.Milliseconds, timings.States, timings.Window
+	for name := range payload["phase_states"].(map[string]string) {
+		payload["phase_states"].(map[string]string)[name] = "not_applicable_shared_rpc"
+	}
+	var snapshot *editAcknowledgementSnapshot
+	if ack != nil {
+		copy := ack.snapshot()
+		snapshot = &copy
+	}
+	attachAcknowledgementPayload(payload, snapshot, "unavailable_ledger_entry_or_scope")
+	return payload, true
+}
+
+// The response-only envelope never enters cloneBatchReceipt or the manifest.
+// A reference can outlive its bounded payload; mutation_status reports that
+// absence explicitly rather than borrowing a retry/status call's own clock.
+type batchAcknowledgementResponse struct {
+	batchTransactionReceipt
+	AcknowledgementReceipt string `json:"acknowledgement_receipt,omitempty"`
+	AcknowledgementState   string `json:"acknowledgement_state"`
+}
+
+func (s *Server) batchAcknowledgementResponse(receipt batchTransactionReceipt) batchAcknowledgementResponse {
+	result := batchAcknowledgementResponse{batchTransactionReceipt: receipt, AcknowledgementState: "unavailable_reference"}
+	if value, ok := s.batchTransactions.Load(receipt.TransactionID); ok {
+		if state, ok := value.(*batchTransactionState); ok {
+			state.mu.RLock()
+			result.AcknowledgementReceipt = state.acknowledgementReceipt
+			state.mu.RUnlock()
+			if result.AcknowledgementReceipt != "" {
+				result.AcknowledgementState = "reference_only_query_mutation_status"
+			}
+		}
+	}
+	return result
+}
+
+func (r batchAcknowledgementResponse) referenceLine() string {
+	if r.AcknowledgementReceipt != "" {
+		return "acknowledgement_receipt=" + r.AcknowledgementReceipt + "\n"
+	}
+	return "acknowledgement_state=" + r.AcknowledgementState + "\n"
 }
 
 type batchAcknowledgementSnapshot struct {

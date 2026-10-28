@@ -258,12 +258,30 @@ func TestEditOperationRealBatchDetachedOriginalAndDuplicate(t *testing.T) {
 		t.Fatal("original caller did not receive its cancellation reply")
 	}
 	require.Zero(t, s.editOperations.completed.Load())
+	stateValue, found := s.batchTransactions.Load("detached-original")
+	require.True(t, found)
+	state := stateValue.(*batchTransactionState)
+	timingID := state.acknowledgementReceipt
+	statusReq := editOperationRequest("mutation_status", "")
+	statusReq.Params.Arguments = map[string]any{"receipt": timingID, "format": "json"}
+	statusResult, statusErr := s.handleMutationStatus(t.Context(), statusReq)
+	beforeTiming := decodeAcknowledgementResult(t, statusResult, statusErr)["acknowledgement"].(map[string]any)
+	require.Equal(t, "measured", beforeTiming["caller_response_state"])
+	require.Nil(t, beforeTiming["actual_handler_ms"])
 	duplicateCtx, stop := context.WithCancel(t.Context())
 	stop()
 	_, _ = s.boundToolHandler(s.handleAtomicBatchEdit)(duplicateCtx, req) // existing reply, no physical write
 	require.Zero(t, s.editOperations.completed.Load())
 	unblock()
 	require.Eventually(t, func() bool { return s.editOperations.completed.Load() == 1 }, 5*time.Second, time.Millisecond)
+	require.Eventually(t, func() bool {
+		payload, _ := s.batchAcknowledgementReceiptPayload(t.Context(), timingID)
+		return payload["acknowledgement"].(acknowledgementPayload).ActualState == "measured"
+	}, 5*time.Second, time.Millisecond)
+	statusResult, statusErr = s.handleMutationStatus(t.Context(), statusReq)
+	afterTiming := decodeAcknowledgementResult(t, statusResult, statusErr)["acknowledgement"].(map[string]any)
+	require.Equal(t, beforeTiming["caller_response_ready_ms"], afterTiming["caller_response_ready_ms"])
+	require.Equal(t, true, afterTiming["actual_finished_after_reply"])
 	require.Eventually(t, func() bool { return AbandonedToolCalls() == 0 }, 5*time.Second, time.Millisecond)
 	require.Zero(t, s.editOperations.committedWithError.Load())
 	require.Equal(t, "after\n", readAtomicBatchFixture(t, path))

@@ -128,24 +128,29 @@ unmeasured and needs the prescribed no-regression runs.
 
 ## Separate lifetimes
 
-`phase_timing.clock` is `monotonic` when a timeline exists, otherwise
+`phase_timing.clock` is `monotonic` when a publication or acknowledgement observation exists, otherwise
 `unavailable`; `coverage` is currently `partial`.
 
-- `ack_wall_ms` is null until an actual response boundary is recorded. The
-  current publication origin is entry into MCP middleware, **after** daemon
-  dispatcher admission. It cannot account for dispatcher queueing or client
-  transport time.
+- `ack_wall_ms` is null until the outer bound tool call returns a caller-facing
+  result/error. Its denominator is entry into `boundToolHandler` through that
+  return, **before** daemon serialization/socket delivery. The separate
+  `acknowledgement` object names this scope and shared RPC identity. It is not
+  the harness's send-to-receive wall. Legacy publication origin remains MCP
+  middleware entry and does not move to this earlier boundary.
 - `patch_wall_ms` is null until the physical patch boundaries are recorded.
   One coalesced patch may serve multiple receipts.
 - `publication_wall_ms`, when terminal boundaries exist, measures
   `received` to `ticket_completed` or `ticket_failed`. It is a receipt interval,
   not the acknowledgement time or the physical patch wall.
-- `publication_unattributed_ms` is that publication wall minus the measured,
+- Without a shared RPC acknowledgement, `publication_unattributed_ms` is that publication wall minus the measured,
   disjoint acknowledgement and observed patch-lap intervals. Patch intervals
   must be wholly inside the admitted executor and publication window. Invalid ordering leaves
   it null. The residual contains
   uninstrumented work and waits; it does not classify them. In particular it
   does not measure the acknowledgement's default reindex wait.
+  When shared RPC laps replace per-file acknowledgement values, this residual
+  is unavailable: subtracting them from a different-origin per-file interval
+  would be invalid.
 
 Acknowledgement and asynchronous patch execution can overlap. Their walls
 must not be added. Likewise `cycle_started` to `admitted` is not labelled pure
@@ -234,9 +239,8 @@ clear the reference, even when pending-source evidence keeps the physical receip
 alive. A late handler can finish its call-scoped observation but cannot reinstall
 it on an evicted record. Raw/unobserved writes have no MCP acknowledgement.
 
-This ownership slice does not publish acknowledgement wire fields. It does not
-attach pointers to `batchTransactions`, whose existing map has no bounded
-eviction. Dispatcher queue/preamble are explicitly
+The ownership does not attach pointers to `batchTransactions`, whose existing
+map has no bounded eviction. Dispatcher queue/preamble are explicitly
 unavailable pending the shared admission interface; actual parse/disk/enqueue
 laps and additive-sum validation are partial work. It does not change the validated actual-completion counters or CPU/WAL
 sampling. Read/native-path and mutation overhead still require measurement.
@@ -257,7 +261,7 @@ no acknowledgement duration. Overlap, missing ends and invalid containment
 produce explicit states, not clipped or residual-derived timings. The
 `LapsDisjoint` flag alone proves neither coverage nor the 5% sum requirement;
 middleware, waits, reply preparation and unsupported paths remain unclassified.
-No acknowledgement wire fields or additional patch log lines are emitted yet.
+No additional patch log line is emitted by acknowledgement projection.
 
 Atomic batches now reserve one scalar `batch-ack-*` reference only in the
 original execution arm. The timing payload occupies a distinct batch-only kind
@@ -272,7 +276,53 @@ indexes, source-evidence registration, physical status/listings, commit notes,
 publication records or disk/graph outcome setters. It supplies no invented
 disk or freshness verdict. The private lookup checks the scalar reference and
 fixed-size transaction identity before borrowing an owned timing snapshot.
-Wire exposure and complete batch parser/durability lap coverage remain pending.
+Complete batch parser/durability lap coverage remains pending.
+
+## Receipt acknowledgement wire and critical-path denominator
+
+`mutation_status` adds `acknowledgement`, with a bounded shared `rpc_id`, scope,
+caller response-ready and actual-handler walls/states, per-lap begin/completion
+counts, and owned duration values. Its nine fixed acknowledgement keys include
+explicitly unavailable dispatcher queue/preamble, middleware, reply preparation
+and transport boundaries. The existing fifteen-key `phases_ms`/`phase_states`
+shape remains: its six acknowledgement keys use the shared RPC observation
+when available; its nine patch keys retain their independent per-receipt
+evidence. `publication_phases` stays byte-for-byte the existing snapshot. Legacy
+records without an acknowledgement retain independently valid publication laps
+and explicitly unavailable RPC ownership, never an origin borrowed from polling.
+
+`reindex_wait` now surrounds the existing passive receipt selects in canonical
+and batch paths. It excludes enqueue/capture, outcome formatting and synchronous
+inline reindex work. The timers, cancellation behavior and dispatch-slot release
+are unchanged. Immediate completed tickets can have a real reached near-zero
+wait; an async checkout admission that never waits has no invented duration.
+
+Batch edit/status JSON or TOON responses carry a response-only
+`acknowledgement_receipt` reference; compact text carries the same reference.
+Query it through `mutation_status`. This explicit `batch_acknowledgement` variant
+has no disk/graph verdict, path or physical mutation listing entry. Durable
+transaction status remains authoritative for those facts. Eviction, restart or
+wrong checkout/incarnation returns unavailable timing rather than a different
+call's clock. Neither this envelope nor a timing snapshot enters the journal.
+
+The current additive set is only valid, complete and disjoint measured chunks
+of parse-gate, disk-call, ticket-admission and passive-wait work. A phase crossing
+the frozen response boundary has only its complete execution observation and
+no acknowledgement duration. `observed_ack_subtotal_ms` sums only eligible
+chunks. `ack_unattributed_ms` is a labelled unclassified gap to the bound-call
+wall, never a phase; invalid counts, overlaps or totals leave both null instead
+of clipping. `sum_state=partial` cannot satisfy the 5% gate, even if a particular
+gap happens to be small. Several file receipts with one `rpc_id` must be
+deduplicated; adding their RPC walls would multiply the same call.
+
+For the eventual 5% check, acknowledgement critical-path stages must cover the
+same caller-facing wall once each; background patch stages cannot be added to
+that wall. The current bound-call wall is a measured subset of the harness's
+monotonic edit-send→ack-receive wall. The missing admission/serialization/client
+transport boundaries and other handler work keep that full comparison open.
+The physical patch subtotal has its own accepted-attempt patch wall; the receipt
+publication wall is a third, overlapping lifetime. No combined acknowledgement
+plus asynchronous-patch sum is asserted against any of these denominators.
 
 ## Logical source-operation witness (transport pending)
 

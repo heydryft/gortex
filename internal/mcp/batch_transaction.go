@@ -1518,10 +1518,11 @@ func (s *Server) handleAtomicBatchEdit(ctx context.Context, req mcp.CallToolRequ
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		response := s.batchAcknowledgementResponse(receipt)
 		if isCompact(req) {
-			return mcp.NewToolResultText(fmt.Sprintf("%s %s disk=%s graph=%s\n", receipt.TransactionID, receipt.Status, receipt.DiskStatus, receipt.GraphStatus)), nil
+			return mcp.NewToolResultText(fmt.Sprintf("%s %s disk=%s graph=%s\n", receipt.TransactionID, receipt.Status, receipt.DiskStatus, receipt.GraphStatus) + response.referenceLine()), nil
 		}
-		return s.respondJSONOrTOON(ctx, req, receipt)
+		return s.respondJSONOrTOON(ctx, req, response)
 	}
 
 	edits, err := parseBatchEdits(rawEdits)
@@ -1583,6 +1584,7 @@ func (s *Server) handleAtomicBatchEdit(ctx context.Context, req mcp.CallToolRequ
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	response := s.batchAcknowledgementResponse(receipt)
 	if isCompact(req) {
 		var out strings.Builder
 		fmt.Fprintf(&out, "%s %s disk=%s graph=%s\n", receipt.TransactionID, receipt.Status, receipt.DiskStatus, receipt.GraphStatus)
@@ -1593,7 +1595,8 @@ func (s *Server) handleAtomicBatchEdit(ctx context.Context, req mcp.CallToolRequ
 			}
 			fmt.Fprintf(&out, "%s %s %s\n", result.Op, target, result.Status)
 		}
+		out.WriteString(response.referenceLine())
 		return mcp.NewToolResultText(out.String()), nil
 	}
-	return s.respondJSONOrTOON(ctx, req, receipt)
+	return s.respondJSONOrTOON(ctx, req, response)
 }

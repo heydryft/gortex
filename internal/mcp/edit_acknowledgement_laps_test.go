@@ -206,7 +206,19 @@ func TestEditAcknowledgementActualWaitTimerAndCancellation(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "wait.go")
 			commitTimingFixture(t, s, ctx, path, "package p\n")
 			// Release the sole existing ticket consumer on every assertion path.
-			t.Cleanup(func() { close(done) })
+			t.Cleanup(func() {
+				close(done)
+				s.mutationReceipts.Range(func(_, value any) bool {
+					if receipt, ok := value.(*mutationReceipt); ok {
+						select {
+						case <-receipt.done:
+						case <-time.After(5 * time.Second):
+							t.Error("owned ticket consumer did not join")
+						}
+					}
+					return true
+				})
+			})
 			outcome := s.mutationReindexState(ctx, path)
 			require.True(t, outcome.Pending)
 			require.NotEmpty(t, outcome.Receipt)
