@@ -100,3 +100,10 @@ func TestEditProbeAccountingRejectsMissingApplicableACKAndWrongAttempt(t *testin
 		})
 	}
 }
+
+func TestEditProbeFreshnessDoesNotReadGuidanceExamples(t *testing.T) {
+	fresh := map[string]any{"freshness": map[string]any{"graph_freshness": "fresh"}}
+	if !editProbeClaimsFresh(fresh) || editProbeClaimsFresh(map[string]any{"guidance": fresh}) {
+		t.Fatal("freshness rider confused with nested example")
+	}
+}

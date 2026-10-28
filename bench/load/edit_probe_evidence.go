@@ -46,27 +46,6 @@ func decodeEditProbeResult(raw json.RawMessage) (map[string]any, error) {
 	return value, nil
 }
 
-func visitEditProbe(value any, visit func(map[string]any) bool) bool {
-	switch row := value.(type) {
-	case map[string]any:
-		if visit(row) {
-			return true
-		}
-		for _, child := range row {
-			if visitEditProbe(child, visit) {
-				return true
-			}
-		}
-	case []any:
-		for _, child := range row {
-			if visitEditProbe(child, visit) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func editProbeSourceCall(source, marker, callee string) bool {
 	file, err := parser.ParseFile(token.NewFileSet(), "probe.go", source, 0)
 	if err != nil {
@@ -139,15 +118,14 @@ func editProbeCorrect(oracle string, body map[string]any, c Corpus, step editPro
 }
 
 func editProbeClaimsFresh(body map[string]any) bool {
-	return visitEditProbe(body, func(row map[string]any) bool {
+	claims := func(row map[string]any) bool {
 		if row["graph_freshness"] == "fresh" || row["freshness_state"] == "fresh" {
 			return true
 		}
-		if freshness, ok := row["freshness"].(map[string]any); ok {
-			return freshness["state"] == "fresh" || freshness["fresh"] == true
-		}
-		return row["freshness"] == "fresh"
-	})
+		return row["state"] == "fresh" || row["fresh"] == true
+	}
+	freshness, _ := body["freshness"].(map[string]any)
+	return body["freshness"] == "fresh" || claims(body) || claims(freshness)
 }
 
 func strconvEditProbeUint(value any) (uint64, error) {
