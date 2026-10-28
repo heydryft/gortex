@@ -155,7 +155,7 @@ func buildDaemonState(logger *zap.Logger, observers ...store_sqlite.MigrationObs
 		overlays:            ss.Overlays,
 		shared:              ss,
 		backendPath:         ss.StorePath,
-		migratedStore:       migrated,
+		migratedStore:       migrated || storeNeedsRebuild(ss.Graph),
 		resolverLSPRegistry: ss.ResolverLSPRegistry,
 		lspRouter:           ss.LSPRouter,
 	}

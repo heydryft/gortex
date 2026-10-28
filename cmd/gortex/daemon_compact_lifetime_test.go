@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -166,48 +167,64 @@ func compactionBootEnv(t *testing.T) {
 }
 
 func TestDaemonMigrationDefersCompactionForOneBoot(t *testing.T) {
-	compactionBootEnv(t)
-	initial, err := store_sqlite.Open(daemonBackendPath)
-	require.NoError(t, err)
-	require.NoError(t, initial.Close())
-	db, err := sql.Open("sqlite", daemonBackendPath)
-	require.NoError(t, err)
-	// v39->v40 is a real in-place migration in the pinned schema. Retain all
-	// current rows/indexes, and request that actual migration on next open.
-	_, err = db.Exec(`PRAGMA user_version=39`)
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
-	core, logs := observer.New(zap.DebugLevel)
-	logger := zap.New(core)
-	observed := 0
-	first, err := buildDaemonState(logger, func(p store_sqlite.MigrationProgress) {
-		if p.Phase == store_sqlite.MigrationStarted {
-			observed++
-		}
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, first.shared.Close()) })
-	require.Positive(t, observed, "the existing observer must still receive migration boundaries")
-	require.True(t, first.migratedStore)
-	file, ok := first.graph.(*store_sqlite.Store)
-	require.True(t, ok)
-	stub := &bootCompactStore{Store: first.graph, file: file}
-	maybeCompactStoreContext(t.Context(), stub, first.migratedStore, logger)
-	require.Zero(t, stub.calls)
-	entry := logs.FilterMessage("daemon: store compaction deferred to next boot").All()
-	require.Len(t, entry, 1)
-	require.Equal(t, "after_migration", entry[0].ContextMap()["reason"])
-	require.NoError(t, first.shared.Close())
-	second, err := buildDaemonState(logger)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, second.shared.Close()) })
-	require.False(t, second.migratedStore, "no durable skip flag may survive to the next boot")
-	file, ok = second.graph.(*store_sqlite.Store)
-	require.True(t, ok)
-	stub = &bootCompactStore{Store: second.graph, file: file}
-	maybeCompactStoreContext(t.Context(), stub, second.migratedStore, logger)
-	require.Equal(t, 1, stub.calls)
-	require.Len(t, logs.FilterMessage("daemon: store compaction finished").All(), 1)
+	for _, test := range []struct {
+		name    string
+		version int
+	}{
+		{name: "in-place migration", version: 39},
+		{name: "supported destructive rebuild", version: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			compactionBootEnv(t)
+			initial, err := store_sqlite.Open(daemonBackendPath)
+			require.NoError(t, err)
+			require.NoError(t, initial.Close())
+			db, err := sql.Open("sqlite", daemonBackendPath)
+			require.NoError(t, err)
+			// v39 exercises a real in-place step; v2 requires the supported
+			// destructive topology rebuild, which has no MigrationStarted event.
+			_, err = db.Exec(fmt.Sprintf(`PRAGMA user_version=%d`, test.version))
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+			core, logs := observer.New(zap.DebugLevel)
+			logger := zap.New(core)
+			observed := 0
+			first, err := buildDaemonState(logger, func(p store_sqlite.MigrationProgress) {
+				if p.Phase == store_sqlite.MigrationStarted {
+					observed++
+				}
+			})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, first.shared.Close()) })
+			if test.version == 39 {
+				require.Positive(t, observed, "the existing observer must still receive in-place migration boundaries")
+			} else {
+				require.Zero(t, observed, "rebuild is proven by the existing store ownership seam, not an invented observer event")
+				require.True(t, storeNeedsRebuild(first.graph))
+			}
+			require.True(t, first.migratedStore)
+			file, ok := first.graph.(*store_sqlite.Store)
+			require.True(t, ok)
+			stub := &bootCompactStore{Store: first.graph, file: file}
+			maybeCompactStoreContext(t.Context(), stub, first.migratedStore, logger)
+			require.Zero(t, stub.calls)
+			entry := logs.FilterMessage("daemon: store compaction deferred to next boot").All()
+			require.Len(t, entry, 1)
+			require.Equal(t, "after_migration", entry[0].ContextMap()["reason"])
+			require.NoError(t, first.shared.Close())
+			second, err := buildDaemonState(logger)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, second.shared.Close()) })
+			require.False(t, second.migratedStore, "no durable skip flag may survive to the next boot")
+			require.False(t, storeNeedsRebuild(second.graph))
+			file, ok = second.graph.(*store_sqlite.Store)
+			require.True(t, ok)
+			stub = &bootCompactStore{Store: second.graph, file: file}
+			maybeCompactStoreContext(t.Context(), stub, second.migratedStore, logger)
+			require.Equal(t, 1, stub.calls)
+			require.Len(t, logs.FilterMessage("daemon: store compaction finished").All(), 1)
+		})
+	}
 }
 
 func TestWarmupDaemonStateDoesNotRunVacuum(t *testing.T) {
