@@ -177,6 +177,8 @@ func (w canonicalAttemptWindow) evaluateAccounting() canonicalAttemptProjection 
 // backoff/discarded attempts, receipt lifetime, ACK or whole-edit background.
 // Even an observed complete partition is not the actual100-edit/5% acceptance.
 type EditPatchAccounting struct {
+	AttemptTicket      uint64              `json:"attempt_ticket"`
+	AttemptRetry       int                 `json:"attempt_retry"`
 	Scope              string              `json:"scope"`
 	BackgroundCoverage string              `json:"background_coverage"`
 	SumState           string              `json:"sum_state"`
@@ -189,7 +191,7 @@ type EditPatchAccounting struct {
 
 func (w canonicalAttemptWindow) projectAccounting() *EditPatchAccounting {
 	p := w.evaluateAccounting()
-	out := &EditPatchAccounting{Scope: "accepted_winning_physical_attempt", BackgroundCoverage: "not_established", SumState: p.state, PartitionComplete: p.complete,
+	out := &EditPatchAccounting{AttemptTicket: w.ticket, AttemptRetry: w.retry, Scope: "accepted_winning_physical_attempt", BackgroundCoverage: "not_established", SumState: p.state, PartitionComplete: p.complete,
 		PhasesMS: make(map[string]*float64, canonicalPatchLapCount), PhaseStates: make(map[string]string, canonicalPatchLapCount)}
 	for i, name := range canonicalAttemptLapNames {
 		out.PhasesMS[name], out.PhaseStates[name] = nil, p.states[i]
@@ -209,6 +211,8 @@ func (w canonicalAttemptWindow) projectAccounting() *EditPatchAccounting {
 func (w canonicalAttemptWindow) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 	p := w.evaluateAccounting()
 	enc.AddString("scope", "accepted_winning_physical_attempt")
+	enc.AddUint64("attempt_ticket", w.ticket)
+	enc.AddInt("attempt_retry", w.retry)
 	enc.AddString("background_coverage", "not_established")
 	enc.AddString("sum_state", p.state)
 	enc.AddBool("observed_partition_complete", p.complete)

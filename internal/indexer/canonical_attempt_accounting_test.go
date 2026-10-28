@@ -15,12 +15,14 @@ func controlledAttemptWindow(t *testing.T) (*PublicationStamps, time.Time, canon
 	s.mu.Lock()
 	evidence := s.freezeAttemptEvidence(origin)
 	s.mu.Unlock()
-	return s, origin, canonicalAttemptWindow{startNS: 1e6, endNS: 31e6, accounting: evidence}
+	return s, origin, canonicalAttemptWindow{startNS: 1e6, endNS: 31e6, ticket: 1, accounting: evidence}
 }
 
 func TestCanonicalAttemptAccountingProjectsOnlyActualAcceptedP(t *testing.T) {
 	_, _, window := controlledAttemptWindow(t)
 	p := window.projectAccounting()
+	require.EqualValues(t, 1, p.AttemptTicket)
+	require.Zero(t, p.AttemptRetry)
 	require.True(t, p.PartitionComplete)
 	require.Equal(t, "partial", p.SumState, "local complete P is not actual100-edit/5% acceptance")
 	require.Equal(t, "accepted_winning_physical_attempt", p.Scope)

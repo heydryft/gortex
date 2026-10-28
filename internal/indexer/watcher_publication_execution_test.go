@@ -195,6 +195,8 @@ func TestCanonicalPublicationDiscardsRetryAttemptSpans(t *testing.T) {
 	require.Same(t, recorder, record.owner.Value(), "late completion requires retained recorder membership")
 	require.Eventually(t, func() bool { return record.Snapshot().attemptWindow != nil }, 2*time.Second, time.Millisecond)
 	require.Equal(t, 1, record.Snapshot().attemptWindow.retry)
+	require.Equal(t, ticket.Generation, record.Snapshot().EditTimings().Window.PatchAccounting.AttemptTicket)
+	require.Equal(t, 1, record.Snapshot().EditTimings().Window.PatchAccounting.AttemptRetry)
 	require.GreaterOrEqual(t, record.Snapshot().attemptWindow.startNS, firstFailed.Sub(origin).Nanoseconds(), "physical wall belongs only to the winning retry")
 	require.GreaterOrEqual(t, phaseOffsets(record.Snapshot())[PublicationPatchExecutionStarted], firstFailed.Sub(origin).Nanoseconds())
 	require.GreaterOrEqual(t, record.Snapshot().laneWait.startNS, firstFailed.Sub(origin).Nanoseconds(), "retry must retain only the winning attempt's wait")

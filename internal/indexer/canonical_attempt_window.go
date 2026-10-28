@@ -18,6 +18,7 @@ type canonicalPointTimer struct {
 type canonicalAttemptWindow struct {
 	startNS, endNS int64
 	retry          int
+	ticket         uint64
 	accounting     canonicalAttemptEvidence
 }
 
@@ -54,6 +55,7 @@ func (p *PublicationPhaseRecord) completePhysicalAttempt(stamps *PublicationStam
 	if valid {
 		stamps.patchLaps.finishAttemptControlLocked(end)
 		ticket = stamps.patchLaps.ticket
+		window.ticket = ticket
 		lateDeep = stamps.patchLaps.freeze(p.origin)
 		lateAdmissions = stamps.freezeCanonicalAdmissions(p.origin)
 		lateLane = stamps.laneWait.freeze(p.origin)
