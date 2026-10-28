@@ -39,10 +39,20 @@ func ServerInstructionsLoading(repo, phase string, percent int) string {
 // ServerInstructionsIdentityPending describes uncertainty, not ownership of
 // the caller's path. It is shared by initialization and modern discovery.
 func ServerInstructionsIdentityPending() string {
-	return "Gortex is LOADING configured repository identities after a restart (identity_resolution, 0%). " +
-		"Graph admission for this path is not yet established; calls return repo_loading (retryable, identity_pending). " +
-		"Retry shortly or continue work natively while identity resolution completes. No graph scope has been granted; " +
-		"do not change tracking configuration or reconnect to resolve this temporary state."
+	return serverInstructionsAdmissionPending("identity_resolution", "identity_pending")
+}
+
+// ServerInstructionsScopeBindingPending applies after registration when the
+// ordinary checkout/scope authority has not established the path's route yet.
+func ServerInstructionsScopeBindingPending() string {
+	return serverInstructionsAdmissionPending("scope_binding", "scope_binding_pending")
+}
+
+func serverInstructionsAdmissionPending(phase, reason string) string {
+	return fmt.Sprintf("Gortex is LOADING graph admission after a restart (%s, 0%%). "+
+		"Graph admission for this path is not yet established; calls return repo_loading (retryable, %s). "+
+		"Retry shortly or continue work natively while admission completes. No graph scope has been granted; "+
+		"do not change tracking configuration or reconnect to resolve this temporary state.", phase, reason)
 }
 
 // ServerInstructionsUnavailable is the inactive initialize variant for a

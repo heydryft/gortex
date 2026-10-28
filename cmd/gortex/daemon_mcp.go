@@ -450,7 +450,7 @@ func (d *mcpDispatcher) cwdReachableChecked(ctx context.Context, cwd string) (bo
 	if cwd == "" {
 		return true, nil
 	}
-	if d.isCWDTracked(cwd) {
+	if d.registeredCWDReachable(cwd) {
 		return true, nil
 	}
 	// Workspace-root fallback: a cwd that CONTAINS tracked repos — an
@@ -468,12 +468,6 @@ func (d *mcpDispatcher) cwdReachableChecked(ctx context.Context, cwd string) (bo
 	// left the session with no working call and a remedy (`gortex track
 	// <parent>`) that would have indexed every child a second time.
 	if d.multiIndexer != nil {
-		if _, _, _, ok := d.multiIndexer.ScopeForCWD(cwd); ok {
-			return true, nil
-		}
-		if _, _, ok := d.multiIndexer.ContainedReposScope(cwd); ok {
-			return true, nil
-		}
 		// Configured but not registered yet: warmup has not reached the
 		// repository, or its load ended without registering it. Decided
 		// before the checkout and router arms, so a worktree of a loading
@@ -509,10 +503,46 @@ func (d *mcpDispatcher) cwdReachableChecked(ctx context.Context, cwd string) (bo
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	if d.multiIndexer != nil && d.multiIndexer.RepoIdentityPending() {
-		return false, &repoPendingAdmission{load: indexer.RepoLoad{State: indexer.RepoLoadIdentityPending}}
+	if d.multiIndexer != nil {
+		if rec, classified := d.multiIndexer.RepoLoadAdmissionForPath(cwd); classified {
+			if rec.State.Ready() {
+				// Registration can publish during the probes above. The load table is
+				// identity evidence, not graph authority: recheck ordinary scope once.
+				if d.registeredCWDReachable(cwd) {
+					return true, nil
+				}
+				if probe != nil {
+					reachable, err := probe(ctx, cwd)
+					if err != nil || reachable {
+						return err == nil && reachable, err
+					}
+				}
+				rec = indexer.RepoLoad{State: indexer.RepoLoadIdentityPending, Reason: "scope_binding_pending"}
+			}
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
+			return false, &repoPendingAdmission{load: rec}
+		}
 	}
 	return false, nil
+}
+
+// registeredCWDReachable is the existing registry/scope positive authority,
+// also rechecked when registration races a negative checkout probe.
+func (d *mcpDispatcher) registeredCWDReachable(cwd string) bool {
+	if d.isCWDTracked(cwd) {
+		return true
+	}
+	if d.multiIndexer != nil {
+		if _, _, _, ok := d.multiIndexer.ScopeForCWD(cwd); ok {
+			return true
+		}
+		if _, _, ok := d.multiIndexer.ContainedReposScope(cwd); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // isCWDTracked reports whether the proxy's cwd lies inside any tracked

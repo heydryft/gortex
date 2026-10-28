@@ -67,16 +67,12 @@ func publicRepoState(state indexer.RepoLoadState) string {
 	return ""
 }
 
-// loadingRepoForPath names the configured repository abs belongs to when that
-// repository is still loading, for the coverage replies the hooks turn into a
-// deny. Lock-free; reads no store.
-func (c *realController) loadingRepoForPath(abs string) (repo string, loading bool) {
+// pendingRepoLoadForPath reads one snapshot: ownership and unresolved identity
+// must never be separated by a concurrent warmup publication. Ready records
+// still require ordinary coverage authority, not permission from this table.
+func (c *realController) pendingRepoLoadForPath(abs string) (indexer.RepoLoad, bool) {
 	if c == nil || c.multiIndexer == nil {
-		return "", false
+		return indexer.RepoLoad{}, false
 	}
-	rec, pending := c.multiIndexer.PendingRepoForPath(abs)
-	if !pending || !rec.State.Loading() {
-		return "", false
-	}
-	return rec.Label(), true
+	return c.multiIndexer.RepoLoadAdmissionForPath(abs)
 }

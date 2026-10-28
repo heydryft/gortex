@@ -1205,7 +1205,7 @@ func readOnlyNativeAllowance(writing bool) enrichResult {
 // hook lets it through because the path's repository is still loading.
 func repoLoadingNativeAllowance(repo string) string {
 	if repo == "" {
-		return "[Gortex] Configured repository identities are still resolving; graph admission for this path is not yet established (repo_loading, identity_pending). Native tools are allowed while this temporary state resolves. Retry shortly without changing tracking configuration.\n"
+		return "[Gortex] Graph admission for this path is still resolving and is not yet established (repo_loading, identity_pending). Native tools are allowed while this temporary state resolves. Retry shortly without changing tracking configuration.\n"
 	}
 	return fmt.Sprintf("[Gortex] %s is still loading after a restart; graph tools return repo_loading until it is ready. "+
 		"Native reads are allowed until then.\n", repo)

@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,4 +59,63 @@ func TestIdentityPendingPreservesRegisteredAutomaticCheckout(t *testing.T) {
 		require.True(t, bound)
 		require.Equal(t, "main-ws", ws)
 	}
+}
+
+func TestStateAwareInstructions_PublicationDuringCheckoutLookup(t *testing.T) {
+	for _, register := range []bool{false, true} {
+		name := "identity"
+		if register {
+			name = "registration"
+		}
+		t.Run(name, func(t *testing.T) {
+			srv, mi, configured := newLoadingServer(t)
+			physical := wsRepo(t, "physical", "published-workspace", "Published")
+			alias := filepath.Join(t.TempDir(), "configured-alias")
+			require.NoError(t, os.Symlink(physical, alias))
+			entries := []config.RepoEntry{{Path: configured}, {Path: alias, Name: "published"}}
+			mi.DeclareRepos(entries)
+			calls := 0
+			instructions := srv.stateAwareInstructionsWithCheckout(t.Context(), physical, serverInstructions, func(ctx context.Context, path string) (bool, error) {
+				calls++
+				require.Equal(t, physical, path)
+				mi.ExpectRepos(entries)
+				if register {
+					_, err := mi.TrackRepoCtx(ctx, config.RepoEntry{Path: physical, Name: "published"})
+					require.NoError(t, err)
+				}
+				return false, nil
+			})
+			require.Equal(t, 1, calls)
+			require.NotContains(t, instructions, "INACTIVE")
+			require.NotContains(t, instructions, "gortex track")
+			if register {
+				require.NotContains(t, instructions, "LOADING")
+			} else {
+				require.Contains(t, instructions, "LOADING published")
+			}
+		})
+	}
+}
+
+func TestStateAwareInstructions_ReadyFamilyWithoutScopeStillRetries(t *testing.T) {
+	srv, mi, primary := newLoadingServer(t)
+	linked := t.TempDir()
+	admin := filepath.Join(primary, ".git", "worktrees", "linked")
+	require.NoError(t, os.MkdirAll(admin, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(admin, "commondir"), []byte("../.."), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(linked, ".git"), []byte("gitdir: "+admin), 0644))
+	calls := 0
+	instructions := srv.stateAwareInstructionsWithCheckout(t.Context(), linked, serverInstructions, func(ctx context.Context, path string) (bool, error) {
+		calls++
+		if calls == 1 {
+			_, err := mi.TrackRepoCtx(ctx, config.RepoEntry{Path: primary, Name: "repo-l"})
+			require.NoError(t, err)
+		}
+		return false, nil
+	})
+	require.Equal(t, 2, calls)
+	require.Contains(t, instructions, "scope_binding_pending")
+	require.NotContains(t, instructions, "INACTIVE")
+	require.NotContains(t, instructions, "gortex track")
+	require.Contains(t, instructions, "No graph scope has been granted")
 }

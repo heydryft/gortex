@@ -108,10 +108,14 @@ func peekFrameToolCall(frame []byte) (string, map[string]any) {
 // session. Retryable, with progress, and it never suggests tracking.
 func (d *mcpDispatcher) repoLoadingError(sess *daemon.Session, inbound []byte, rec indexer.RepoLoad) []byte {
 	if rec.State == indexer.RepoLoadIdentityPending {
-		return jsonRPCErrorFrame(inbound, "configured repository identity resolution is pending", map[string]any{
+		reason, phase, suggestion := "identity_pending", "identity_resolution", gortexmcp.ServerInstructionsIdentityPending()
+		if rec.Reason == "scope_binding_pending" {
+			reason, phase, suggestion = rec.Reason, "scope_binding", gortexmcp.ServerInstructionsScopeBindingPending()
+		}
+		return jsonRPCErrorFrame(inbound, "graph admission is pending", map[string]any{
 			"error_code": string(gortexmcp.ErrCodeRepoLoading), "retryable": true, "path": sess.CWD,
-			"state": "identity_pending", "reason": "identity_pending", "phase": "identity_resolution", "percent": 0,
-			"suggestion": gortexmcp.ServerInstructionsIdentityPending(),
+			"state": reason, "reason": reason, "phase": phase, "percent": 0,
+			"suggestion": suggestion,
 		})
 	}
 	phase, percent := "starting", 0
@@ -161,6 +165,9 @@ func (d *mcpDispatcher) loadingIndexHealth(inbound []byte, rec indexer.RepoLoad)
 	reason := ""
 	if rec.State == indexer.RepoLoadIdentityPending {
 		phase, percent, reason = "identity_resolution", 0, "identity_pending"
+		if rec.Reason == "scope_binding_pending" {
+			phase, reason, message = "scope_binding", rec.Reason, gortexmcp.ServerInstructionsScopeBindingPending()
+		}
 	} else {
 		repos = append(repos, map[string]any{"repo": rec.Prefix, "path": rec.Root, "state": string(rec.State), "since": rec.Since})
 		message = gortexmcp.RepoLoadingSuggestion(rec.Label())
