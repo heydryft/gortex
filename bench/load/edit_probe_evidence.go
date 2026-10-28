@@ -96,6 +96,17 @@ func editProbeSourceID(id, file, name string) bool {
 }
 
 func editProbeCorrect(oracle string, body map[string]any, c Corpus, step editProbeStep, callee string) bool {
+	// Collections are producer-specific and top-level. Nested guidance/examples
+	// must never become proof that the requested graph fact was returned.
+	collection := func(key string, accept func(map[string]any) bool) bool {
+		rows, _ := body[key].([]any)
+		for _, value := range rows {
+			if row, ok := value.(map[string]any); ok && accept(row) {
+				return true
+			}
+		}
+		return false
+	}
 	switch oracle {
 	case "source":
 		source, _ := body["source"].(string)
@@ -104,32 +115,26 @@ func editProbeCorrect(oracle string, body map[string]any, c Corpus, step editPro
 		source, _ := body["content"].(string)
 		return editProbeSourceCall(source, step.Marker, callee)
 	case "text":
-		return visitEditProbe(body, func(row map[string]any) bool {
+		return collection("matches", func(row map[string]any) bool {
 			path, _ := row["path"].(string)
 			text, _ := row["text"].(string)
 			line, err := strconvEditProbeUint(row["line"])
 			return err == nil && line > 0 && (path == c.File || strings.HasSuffix(path, "/"+c.File)) && strings.Contains(text, "func "+step.Marker)
 		})
 	case "callers", "call_chain":
-		return visitEditProbe(body, func(row map[string]any) bool {
+		return collection("edges", func(row map[string]any) bool {
 			from, _ := row["from"].(string)
 			to, _ := row["to"].(string)
 			return row["kind"] == "calls" && editProbeSourceID(from, c.File, step.Marker) && editProbeSourceID(to, c.File, callee)
 		})
-	default:
-		// Only a returned fact collection can prove a declaration. Query/target
-		// echoes and top-level guidance IDs are not graph/source observations.
-		return visitEditProbe(body, func(row map[string]any) bool {
-			for _, key := range []string{"nodes", "symbols", "matches", "results"} {
-				if facts, ok := row[key].([]any); ok && visitEditProbe(facts, func(fact map[string]any) bool {
-					id, _ := fact["id"].(string)
-					return editProbeSourceID(id, c.File, step.Marker)
-				}) {
-					return true
-				}
-			}
-			return false
+	case "summary", "editing_context", "search_visible":
+		key := map[string]string{"summary": "nodes", "editing_context": "defines", "search_visible": "results"}[oracle]
+		return collection(key, func(row map[string]any) bool {
+			id, _ := row["id"].(string)
+			return editProbeSourceID(id, c.File, step.Marker)
 		})
+	default:
+		return false
 	}
 }
 
@@ -248,6 +253,12 @@ func checkEditProbeAccounting(status map[string]any, receipt string) editProbeAc
 		fail("bound disjoint A identity unavailable")
 	}
 	aPhases, _ := ack["observed_execution_ms"].(map[string]any)
+	aStates, _ := ack["phase_states"].(map[string]any)
+	for _, name := range []string{"caller_result", "disk_write", "edit_control", "middleware", "parse", "publish", "reindex_wait", "reply_prepare"} {
+		if aPhases[name] == nil || aStates[name] != "measured" {
+			fail("missing applicable A phase " + name)
+		}
+	}
 	a, e := checkEditProbeWindow(ack["caller_response_ready_ms"], aPhases)
 	if e != nil {
 		fail("A: " + e.Error())
@@ -274,7 +285,8 @@ func checkEditProbeAccounting(status map[string]any, receipt string) editProbeAc
 	}
 	pAccounting, _ := physical["patch_accounting"].(map[string]any)
 	pTicket, _ := strconvEditProbeUint(pAccounting["attempt_ticket"])
-	if pAccounting["observed_partition_complete"] != true || pTicket != applied {
+	pRetry, retryErr := strconvEditProbeUint(pAccounting["attempt_retry"])
+	if pAccounting["observed_partition_complete"] != true || pTicket != applied || retryErr != nil || pRetry != 0 {
 		fail("applicable physical P unavailable")
 	}
 	pPhases, _ := pAccounting["phases_ms"].(map[string]any)
