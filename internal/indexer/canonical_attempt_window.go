@@ -30,7 +30,7 @@ func (p *pointPublicationAttempt) finishPhysicalAttempt(start, end time.Time, re
 	logger.Info("graph patch attempt complete",
 		zap.String("patch_lap_scope", "accepted_physical_attempt_complete"),
 		zap.String("publication_key", p.record.Key()),
-		zap.Uint64("attempt_ticket", p.stamps.patchLaps.ticket),
+		zap.Uint64("attempt_ticket", window.ticket),
 		zap.Int("attempt_retry", window.retry),
 		zap.Float64("attempt_wall_ms", float64(window.endNS-window.startNS)/1e6),
 		zap.Object("attempt_accounting", window))
