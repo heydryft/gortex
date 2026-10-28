@@ -2,6 +2,7 @@ package indexer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,6 +22,13 @@ type trackNamingFacts struct {
 	inventory *gitstate.FamilyInventory
 	record    *gitstate.WorktreeRecord
 	err       error
+}
+
+func trackNamingFailure(ctx context.Context, err error) error {
+	if ctx.Err() == nil && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errPrefixStatUnavailable)) {
+		return fmt.Errorf("%w: %w", errPrefixIdentityUnknown, err)
+	}
+	return err
 }
 
 func readTrackNaming(ctx context.Context, root string) trackNamingFacts {
@@ -87,7 +95,7 @@ func (mi *MultiIndexer) effectiveTrackPrefix(ctx context.Context, entry config.R
 		if os.IsNotExist(err) {
 			return base, nil // absent configured owners retain their basename
 		}
-		return "", err
+		return "", trackNamingFailure(ctx, err)
 	}
 	return mi.trackPrefixFromFacts(entry, facts), nil
 }

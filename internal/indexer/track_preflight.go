@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -14,8 +15,8 @@ import (
 // configuredTrackEntry uses requested/canonical basename candidates and
 // completed startup alias facts. Unresolved arbitrary configured aliases mean
 // retry, never permission to persist a duplicate physical root.
-func (mi *MultiIndexer) configuredTrackEntry(ctx context.Context, root string, before time.Time) (*config.RepoEntry, error) {
-	entry, err := mi.configuredTrackEntryWithCanonical(ctx, root, "", before)
+func (mi *MultiIndexer) configuredTrackEntry(ctx context.Context, root string, before time.Time, requested ...string) (*config.RepoEntry, error) {
+	entry, err := mi.configuredTrackEntryWithCanonical(ctx, root, "", before, requested...)
 	if err != nil || entry != nil || mi.configMgr == nil {
 		return entry, err
 	}
@@ -23,12 +24,12 @@ func (mi *MultiIndexer) configuredTrackEntry(ctx context.Context, root string, b
 	defer cancel()
 	facts, err := mi.prefixStats.naming(budget, root)
 	if err != nil {
-		return nil, err
+		return nil, trackNamingFailure(ctx, err)
 	}
-	return mi.configuredTrackEntryWithCanonical(ctx, root, facts.canonical, before)
+	return mi.configuredTrackEntryWithCanonical(ctx, root, facts.canonical, before, requested...)
 }
 
-func (mi *MultiIndexer) configuredTrackEntryWithCanonical(ctx context.Context, root, canonical string, before time.Time) (*config.RepoEntry, error) {
+func (mi *MultiIndexer) configuredTrackEntryWithCanonical(ctx context.Context, root, canonical string, before time.Time, requested ...string) (*config.RepoEntry, error) {
 	if mi.configMgr == nil {
 		return nil, nil
 	}
@@ -37,6 +38,14 @@ func (mi *MultiIndexer) configuredTrackEntryWithCanonical(ctx context.Context, r
 	seen := make(map[string]bool, len(entries))
 	for _, entry := range entries {
 		seen[entry.Path] = true
+	}
+	for _, prefix := range requested {
+		for _, entry := range snapshot.InstanceCandidates(prefix) {
+			if !seen[entry.Path] {
+				entries = append(entries, entry)
+				seen[entry.Path] = true
+			}
+		}
 	}
 	appendCandidates := func(path string) {
 		for _, entry := range snapshot.RootCandidates(path) {
@@ -62,6 +71,7 @@ func (mi *MultiIndexer) configuredTrackEntryWithCanonical(ctx context.Context, r
 	budget, cancel := context.WithDeadline(ctx, before)
 	defer cancel()
 	var candidate *prefixStatResult
+	provedDistinct := make(map[string]bool)
 	for _, entry := range entries {
 		// Distinct roots in a basename bucket need no I/O unless one might
 		// actually be an alias. Same-basename symlinks are intentionally kept.
@@ -73,6 +83,10 @@ func (mi *MultiIndexer) configuredTrackEntryWithCanonical(ctx context.Context, r
 		if sameObservedDirectory(*candidate, owner) {
 			return &entry, nil
 		}
+		if candidate.err == nil && candidate.info != nil && candidate.info.IsDir() &&
+			(owner.err == nil && owner.info != nil && owner.info.IsDir() || errors.Is(owner.err, os.ErrNotExist)) {
+			provedDistinct[entry.Path] = true
+		}
 		if pathkey.EqualPaths(entry.Path, root) && (candidate.err != nil || owner.err != nil) {
 			return nil, errPrefixIdentityUnknown
 		}
@@ -83,6 +97,9 @@ func (mi *MultiIndexer) configuredTrackEntryWithCanonical(ctx context.Context, r
 		// that matched no configured entry. Known/configured tracks return
 		// above; no operation here scans the filesystem of unrelated roots.
 		for _, path := range snapshot.TopLevelRoots() {
+			if provedDistinct[path] {
+				continue
+			}
 			i, known := loads.find(absRepoRoot(path))
 			if !known || loads.records[i].identityPending || loads.records[i].canonicalKey == "" && loads.records[i].State != RepoLoadMissing {
 				return nil, errPrefixIdentityUnknown
@@ -100,6 +117,46 @@ func (l *CheckoutLifecycle) prepareRegistrationEntry(ctx context.Context, entry 
 	return prepared, err
 }
 
+func applyConfiguredTrackEntry(entry config.RepoEntry, configured *config.RepoEntry) (config.RepoEntry, error) {
+	if configured == nil {
+		return entry, nil
+	}
+	if entry.Name != "" && entry.Name != config.ResolvePrefix(*configured) {
+		return entry, fmt.Errorf("%s is already configured; set name: %s in the global config and run `gortex daemon reload`", entry.Path, entry.Name)
+	}
+	return configuredTrackAnchor(entry, configured), nil
+}
+
+func configuredTrackAnchor(entry config.RepoEntry, configured *config.RepoEntry) config.RepoEntry {
+	if configured == nil {
+		return entry
+	}
+	if entry.Name == "" {
+		entry.Name = configured.Name
+	}
+	if entry.Workspace == "" {
+		entry.Workspace = configured.Workspace
+	}
+	// Keep the configured spelling as the persistence anchor. AddRepo's
+	// lexical dedup must never append another entry for this physical alias.
+	entry.Path = configured.Path
+	return entry
+}
+
+func (mi *MultiIndexer) resolveConfiguredTrackAnchor(ctx context.Context, entry config.RepoEntry, root string, before time.Time) (config.RepoEntry, error) {
+	configured, err := mi.configuredTrackEntry(ctx, root, before, config.ResolvePrefix(entry))
+	if err != nil {
+		return entry, err
+	}
+	entry.Path = root
+	if configured != nil && configured.Name != "" {
+		return applyConfiguredTrackEntry(entry, configured)
+	}
+	// Internal warmup may pin a derived instance name for a legacy entry
+	// whose persisted Name is empty. Retain that existing naming contract.
+	return configuredTrackAnchor(entry, configured), nil
+}
+
 func (l *CheckoutLifecycle) prepareRegistrationNaming(ctx context.Context, entry config.RepoEntry, before time.Time) (config.RepoEntry, trackNamingFacts, error) {
 	var facts trackNamingFacts
 	abs, err := filepath.Abs(entry.Path)
@@ -111,22 +168,15 @@ func (l *CheckoutLifecycle) prepareRegistrationNaming(ctx context.Context, entry
 	defer cancel()
 	facts, err = l.mi.prefixStats.naming(budget, entry.Path)
 	if err != nil {
-		return entry, facts, err
+		return entry, facts, trackNamingFailure(ctx, err)
 	}
-	configured, err := l.mi.configuredTrackEntryWithCanonical(budget, entry.Path, facts.canonical, before)
+	configured, err := l.mi.configuredTrackEntryWithCanonical(budget, entry.Path, facts.canonical, before, config.ResolvePrefix(entry))
 	if err != nil {
 		return entry, facts, err
 	}
-	if configured != nil {
-		if entry.Name != "" && entry.Name != config.ResolvePrefix(*configured) {
-			return entry, facts, fmt.Errorf("%s is already configured; set name: %s in the global config and run `gortex daemon reload`", entry.Path, entry.Name)
-		}
-		if entry.Name == "" {
-			entry.Name = configured.Name
-		}
-		if entry.Workspace == "" {
-			entry.Workspace = configured.Workspace
-		}
+	entry, err = applyConfiguredTrackEntry(entry, configured)
+	if err != nil {
+		return entry, facts, err
 	}
 	observed, ownershipErr := l.mi.observePrefixOwnershipBefore(budget, config.ResolvePrefix(entry), entry.Path, before, nil)
 	if observed.registeredPrefix != "" {

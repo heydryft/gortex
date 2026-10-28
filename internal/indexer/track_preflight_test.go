@@ -143,4 +143,27 @@ func TestColdConfiguredAliasRequiresCompletedIdentityBeforeNewRoot(t *testing.T)
 	require.Equal(t, "configured-workspace", entry.Workspace)
 	_, err = lifecycle.prepareRegistrationEntry(t.Context(), config.RepoEntry{Path: owner, Name: "other"}, time.Now().Add(prefixOwnershipTimeout))
 	require.ErrorContains(t, err, "already configured")
+	_, err = mi.TrackRepoCtx(t.Context(), config.RepoEntry{Path: owner})
+	require.NoError(t, err)
+	require.NotNil(t, mi.GetMetadata("pinned"))
+	require.Equal(t, configured, mi.GetMetadata("pinned").RootPath)
+	entries := cm.Global().ReposSnapshot()
+	require.Len(t, entries, 1)
+	require.Equal(t, configured, entries[0].Path)
+}
+
+func TestColdKnownConfiguredOwnerStillReturnsTypedCollision(t *testing.T) {
+	_, mi, cm := newWorktreeTestIndexer(t)
+	t.Cleanup(func() { require.NoError(t, mi.Close(context.Background())) })
+	owner, other := filepath.Join(t.TempDir(), "owner"), filepath.Join(t.TempDir(), "other")
+	for _, root := range []string{owner, other} {
+		require.NoError(t, os.MkdirAll(root, 0o755))
+	}
+	require.NoError(t, cm.Global().AddRepo(config.RepoEntry{Path: owner, Name: "src"}))
+	_, err := mi.TrackRepoCtx(t.Context(), config.RepoEntry{Path: other, Name: "src"})
+	var collision *PrefixCollisionError
+	require.ErrorAs(t, err, &collision, "freshly proved distinct configured ownership is not downgraded to uncertainty")
+	require.Equal(t, owner, collision.ExistingPath)
+	require.Equal(t, "present", collision.OwnerState)
+	require.Empty(t, mi.AllMetadata())
 }

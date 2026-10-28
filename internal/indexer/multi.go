@@ -2684,7 +2684,7 @@ func (mi *MultiIndexer) resolveTrackPrefixContext(ctx context.Context, entry *co
 	// Read the workspace once, before acquiring the registry lock. The same
 	// snapshot supplies both membership and the eventual config publication.
 	if lookup == nil {
-		configured, err := mi.configuredTrackEntry(ctx, absPath, before)
+		configured, err := mi.configuredTrackEntry(ctx, absPath, before, base)
 		if err != nil {
 			return trackPrefixResolution{prefix: base}, err
 		}
@@ -2858,6 +2858,19 @@ func (mi *MultiIndexer) prepareTrackRepoContext(ctx context.Context, entry confi
 
 	if reason, blocked := unsafeRootBlocked(absPath, entry.Force); blocked {
 		return nil, fmt.Errorf("%s; pass force to track it anyway", reason)
+	}
+	entry, err = mi.resolveConfiguredTrackAnchor(ctx, entry, absPath, before)
+	if err != nil {
+		return nil, err
+	}
+	if entry.Path != absPath {
+		absPath = entry.Path
+		statCtx, cancel := context.WithDeadline(ctx, before)
+		candidate = mi.prefixStats.observe(statCtx, absPath)
+		cancel()
+		if candidate.err != nil || candidate.info == nil || !candidate.info.IsDir() {
+			return nil, fmt.Errorf("%w: configured root changed during alias admission", errPrefixIdentityUnknown)
+		}
 	}
 
 	identity, err := DetectIdentity(absPath)
@@ -3058,6 +3071,19 @@ func (mi *MultiIndexer) ReconcileRepoCtx(ctx context.Context, entry config.RepoE
 	}
 	if candidate.info == nil || !candidate.info.IsDir() {
 		return nil, fmt.Errorf("path is not a directory: %s", absPath)
+	}
+	entry, err = mi.resolveConfiguredTrackAnchor(ctx, entry, absPath, before)
+	if err != nil {
+		return nil, err
+	}
+	if entry.Path != absPath {
+		absPath = entry.Path
+		statCtx, cancel := context.WithDeadline(ctx, before)
+		candidate = mi.prefixStats.observe(statCtx, absPath)
+		cancel()
+		if candidate.err != nil || candidate.info == nil || !candidate.info.IsDir() {
+			return nil, fmt.Errorf("%w: configured root changed during alias admission", errPrefixIdentityUnknown)
+		}
 	}
 	identity, err := DetectIdentity(absPath)
 	if err != nil {

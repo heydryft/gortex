@@ -21,6 +21,10 @@ var (
 	errPrefixIdentityUnknown = errors.New("repository root identity could not be established")
 )
 
+// ErrRepoIdentityPending is retryable uncertainty about a configured physical
+// root. No track/config/catalog publication is authorized by this outcome.
+var ErrRepoIdentityPending = errPrefixIdentityUnknown
+
 // prefixStatAllowance is deliberately not a filesystem worker service. Native
 // filesystem calls have no portable cancellation API. At most two observations per indexer
 // may remain physically stuck; further callers abstain without starting work.

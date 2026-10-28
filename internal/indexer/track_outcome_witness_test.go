@@ -24,6 +24,9 @@ func TestTrackOutcomeWitnessRejectsOwnerAndConfigReplacement(t *testing.T) {
 	f.mi.repos["src"] = original
 	f.mi.mu.Unlock()
 	require.True(t, f.mi.TrackOutcomeCurrent(witness))
+	f.mi.DeclareRepos(append(f.cm.Global().ReposSnapshot(), config.RepoEntry{Path: t.TempDir()}))
+	require.False(t, f.mi.TrackOutcomeCurrent(witness), "new alias identity publication invalidates a pending outcome")
+	witness = f.mi.CaptureTrackOutcome("src", owner)
 	require.NoError(t, f.cm.Global().AddRepo(config.RepoEntry{Path: t.TempDir(), Name: "next"}))
 	require.False(t, f.mi.TrackOutcomeCurrent(witness), "a changed configuration requires fresh admission")
 }

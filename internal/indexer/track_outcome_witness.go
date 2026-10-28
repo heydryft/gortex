@@ -9,6 +9,7 @@ type TrackOutcomeWitness struct {
 	owner  *RepoMetadata
 	root   string
 	config *config.RepoTrackSnapshot
+	loads  *repoLoadSnapshot
 	valid  bool
 }
 
@@ -16,6 +17,7 @@ func (mi *MultiIndexer) CaptureTrackOutcome(prefix, collisionOwner string) Track
 	mi.mu.RLock()
 	owner := mi.repos[prefix]
 	witness := TrackOutcomeWitness{prefix: prefix, owner: owner, valid: true}
+	witness.loads = mi.repoLoads.snap.Load()
 	if owner != nil {
 		witness.root = owner.RootPath
 	}
@@ -32,6 +34,9 @@ func (mi *MultiIndexer) CaptureTrackOutcome(prefix, collisionOwner string) Track
 func (mi *MultiIndexer) TrackOutcomeCurrent(witness TrackOutcomeWitness) bool {
 	if !witness.valid {
 		return false
+	}
+	if mi.repoLoads.snap.Load() != witness.loads {
+		return false // completed alias discovery makes a pending retry actionable
 	}
 	if mi.configMgr != nil && mi.configMgr.RepoTrackSnapshot() != witness.config {
 		return false
