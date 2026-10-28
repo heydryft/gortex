@@ -261,19 +261,21 @@ func (l *CheckoutLifecycle) publishPromotedCorpus(ctx context.Context, checkout 
 		if err != nil {
 			return err
 		}
-		// Legacy unpublished catalog rows allow rebinding. Promotion cannot use
-		// that compatibility behavior to overwrite a different checkout owner.
-		binding, found, err := l.catalog.GetDedicatedGraph(ctx, row.GraphID)
-		if err != nil {
-			return err
-		}
-		if found && (binding.OwnerCheckoutID != checkout.CheckoutID || binding.FamilyID != checkout.FamilyID) {
-			return fmt.Errorf("%w: promotion graph %s belongs to another checkout", store_sqlite.ErrCatalogStaleGuard, row.GraphID)
-		}
-		if err := l.catalog.UpsertDedicatedGraph(ctx, row); err != nil {
-			return err
-		}
-		return l.serveFromOwnCorpus(ctx, checkout)
+		return idx.withOutputGeneration(ctx, OutputEntryPromotionPublication, func() error {
+			// Legacy unpublished catalog rows allow rebinding. Promotion cannot use
+			// that compatibility behavior to overwrite a different checkout owner.
+			binding, found, err := l.catalog.GetDedicatedGraph(ctx, row.GraphID)
+			if err != nil {
+				return err
+			}
+			if found && (binding.OwnerCheckoutID != checkout.CheckoutID || binding.FamilyID != checkout.FamilyID) {
+				return fmt.Errorf("%w: promotion graph %s belongs to another checkout", store_sqlite.ErrCatalogStaleGuard, row.GraphID)
+			}
+			if err := l.catalog.UpsertDedicatedGraph(ctx, row); err != nil {
+				return err
+			}
+			return l.serveFromOwnCorpus(ctx, checkout)
+		})
 	})
 }
 
