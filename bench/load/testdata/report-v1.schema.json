@@ -406,6 +406,586 @@
             ],
             "type": "object"
           },
+          "edit_probe": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "accounting_required": {
+                    "type": "boolean"
+                  },
+                  "edits": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "accounting": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "acknowledgement": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "residual_ns": {
+                                      "type": "integer"
+                                    },
+                                    "sum_ns": {
+                                      "type": "integer"
+                                    },
+                                    "wall_ns": {
+                                      "type": "integer"
+                                    },
+                                    "within_five_percent": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "required": [
+                                    "wall_ns",
+                                    "sum_ns",
+                                    "residual_ns",
+                                    "within_five_percent"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "applied_generation": {
+                              "type": "integer"
+                            },
+                            "bound_rpc_id": {
+                              "type": "string"
+                            },
+                            "physical": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "residual_ns": {
+                                      "type": "integer"
+                                    },
+                                    "sum_ns": {
+                                      "type": "integer"
+                                    },
+                                    "wall_ns": {
+                                      "type": "integer"
+                                    },
+                                    "within_five_percent": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "required": [
+                                    "wall_ns",
+                                    "sum_ns",
+                                    "residual_ns",
+                                    "within_five_percent"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "reasons": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": [
+                                "array",
+                                "null"
+                              ]
+                            },
+                            "requested_background": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "residual_ns": {
+                                      "type": "integer"
+                                    },
+                                    "sum_ns": {
+                                      "type": "integer"
+                                    },
+                                    "wall_ns": {
+                                      "type": "integer"
+                                    },
+                                    "within_five_percent": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "required": [
+                                    "wall_ns",
+                                    "sum_ns",
+                                    "residual_ns",
+                                    "within_five_percent"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "requested_generation": {
+                              "type": "integer"
+                            },
+                            "state": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "state",
+                            "bound_rpc_id",
+                            "requested_generation",
+                            "applied_generation",
+                            "acknowledgement",
+                            "physical",
+                            "requested_background",
+                            "reasons"
+                          ],
+                          "type": "object"
+                        },
+                        "activated_ns": {
+                          "anyOf": [
+                            {
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "errors": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": [
+                            "array",
+                            "null"
+                          ]
+                        },
+                        "evidence_bytes": {
+                          "type": "integer"
+                        },
+                        "evidence_encode_ms": {
+                          "type": "number"
+                        },
+                        "evidence_limit_bytes": {
+                          "type": "integer"
+                        },
+                        "evidence_write_ms": {
+                          "type": "number"
+                        },
+                        "first_correct_ms": {
+                          "additionalProperties": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "reason": {
+                                "type": "string"
+                              },
+                              "unit": {
+                                "type": "string"
+                              },
+                              "value": {
+                                "anyOf": [
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "value",
+                              "unit",
+                              "reason"
+                            ],
+                            "type": "object"
+                          },
+                          "type": [
+                            "object",
+                            "null"
+                          ]
+                        },
+                        "graph_terminal": {
+                          "type": "boolean"
+                        },
+                        "marker": {
+                          "type": "string"
+                        },
+                        "mutation_id": {
+                          "type": "string"
+                        },
+                        "mutation_receipt": {
+                          "type": "string"
+                        },
+                        "ordinal": {
+                          "type": "integer"
+                        },
+                        "outcome": {
+                          "type": "string"
+                        },
+                        "planned_due_ns": {
+                          "type": "integer"
+                        },
+                        "precommit_fresh_mismatches_unassessed": {
+                          "type": "integer"
+                        },
+                        "probe_errors": {
+                          "type": "integer"
+                        },
+                        "raw_evidence": {
+                          "type": "string"
+                        },
+                        "readbacks": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "correct": {
+                                "type": "boolean"
+                              },
+                              "error": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string"
+                              },
+                              "latency_ms": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "reason": {
+                                    "type": "string"
+                                  },
+                                  "unit": {
+                                    "type": "string"
+                                  },
+                                  "value": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "value",
+                                  "unit",
+                                  "reason"
+                                ],
+                                "type": "object"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "latency_ms",
+                              "correct",
+                              "error"
+                            ],
+                            "type": "object"
+                          },
+                          "type": [
+                            "array",
+                            "null"
+                          ]
+                        },
+                        "reads_while_receipt_observed_pending": {
+                          "type": "integer"
+                        },
+                        "stale_claimed_fresh": {
+                          "type": "boolean"
+                        },
+                        "start_lateness_ns": {
+                          "anyOf": [
+                            {
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "started_ns": {
+                          "anyOf": [
+                            {
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "t_ack_ms": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "reason": {
+                              "type": "string"
+                            },
+                            "unit": {
+                              "type": "string"
+                            },
+                            "value": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "unit",
+                            "reason"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "ordinal",
+                        "marker",
+                        "mutation_id",
+                        "planned_due_ns",
+                        "activated_ns",
+                        "started_ns",
+                        "start_lateness_ns",
+                        "outcome",
+                        "mutation_receipt",
+                        "t_ack_ms",
+                        "readbacks",
+                        "first_correct_ms",
+                        "accounting",
+                        "reads_while_receipt_observed_pending",
+                        "probe_errors",
+                        "stale_claimed_fresh",
+                        "precommit_fresh_mismatches_unassessed",
+                        "graph_terminal",
+                        "raw_evidence",
+                        "evidence_write_ms",
+                        "evidence_encode_ms",
+                        "evidence_bytes",
+                        "evidence_limit_bytes",
+                        "errors"
+                      ],
+                      "type": "object"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
+                  },
+                  "limitations": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
+                  },
+                  "plan": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "arrival": {
+                        "type": "string"
+                      },
+                      "callee": {
+                        "type": "string"
+                      },
+                      "commit": {
+                        "type": "string"
+                      },
+                      "count": {
+                        "type": "integer"
+                      },
+                      "file": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "language": {
+                        "type": "string"
+                      },
+                      "mean_interarrival_ns": {
+                        "type": "integer"
+                      },
+                      "mode": {
+                        "type": "string"
+                      },
+                      "not_selected_not_tested": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": [
+                          "array",
+                          "null"
+                        ]
+                      },
+                      "probe_period_ns": {
+                        "type": "integer"
+                      },
+                      "repo": {
+                        "type": "string"
+                      },
+                      "seed": {
+                        "type": "integer"
+                      },
+                      "session_model": {
+                        "type": "string"
+                      },
+                      "steps": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "activate_ns": {
+                              "type": "integer"
+                            },
+                            "due_ns": {
+                              "type": "integer"
+                            },
+                            "marker": {
+                              "type": "string"
+                            },
+                            "mutation_id": {
+                              "type": "string"
+                            },
+                            "ordinal": {
+                              "type": "integer"
+                            },
+                            "request": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "arguments": {
+                                  "additionalProperties": {},
+                                  "type": [
+                                    "object",
+                                    "null"
+                                  ]
+                                },
+                                "operation": {
+                                  "type": "string"
+                                },
+                                "tool": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "tool",
+                                "operation",
+                                "arguments"
+                              ],
+                              "type": "object"
+                            },
+                            "request_sha256": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "ordinal",
+                            "activate_ns",
+                            "due_ns",
+                            "marker",
+                            "mutation_id",
+                            "request",
+                            "request_sha256"
+                          ],
+                          "type": "object"
+                        },
+                        "type": [
+                          "array",
+                          "null"
+                        ]
+                      },
+                      "tool": {
+                        "type": "string"
+                      },
+                      "version": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "version",
+                      "arrival",
+                      "mean_interarrival_ns",
+                      "probe_period_ns",
+                      "count",
+                      "seed",
+                      "kind",
+                      "tool",
+                      "language",
+                      "mode",
+                      "repo",
+                      "commit",
+                      "file",
+                      "callee",
+                      "session_model",
+                      "not_selected_not_tested",
+                      "steps"
+                    ],
+                    "type": "object"
+                  },
+                  "plan_sha256": {
+                    "type": "string"
+                  },
+                  "restore_batch": {},
+                  "restore_batch_ms": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "reason": {
+                        "type": "string"
+                      },
+                      "unit": {
+                        "type": "string"
+                      },
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "value",
+                      "unit",
+                      "reason"
+                    ],
+                    "type": "object"
+                  },
+                  "stats_after": {},
+                  "stats_before": {}
+                },
+                "required": [
+                  "plan",
+                  "plan_sha256",
+                  "accounting_required",
+                  "edits",
+                  "restore_batch_ms",
+                  "restore_batch",
+                  "stats_before",
+                  "stats_after",
+                  "limitations"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "edits": {
             "items": {
               "additionalProperties": false,
@@ -578,6 +1158,9 @@
                     "object",
                     "null"
                   ]
+                },
+                "harness_incomplete": {
+                  "type": "integer"
                 },
                 "latency_ms": {
                   "additionalProperties": false,
@@ -781,6 +1364,9 @@
                     "object",
                     "null"
                   ]
+                },
+                "harness_incomplete": {
+                  "type": "integer"
                 },
                 "latency_ms": {
                   "additionalProperties": false,
@@ -1180,6 +1766,155 @@
         },
         "edit_agents": {
           "type": "integer"
+        },
+        "edit_probe": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "arrival": {
+                  "type": "string"
+                },
+                "callee": {
+                  "type": "string"
+                },
+                "commit": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer"
+                },
+                "file": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "language": {
+                  "type": "string"
+                },
+                "mean_interarrival_ns": {
+                  "type": "integer"
+                },
+                "mode": {
+                  "type": "string"
+                },
+                "not_selected_not_tested": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "array",
+                    "null"
+                  ]
+                },
+                "probe_period_ns": {
+                  "type": "integer"
+                },
+                "repo": {
+                  "type": "string"
+                },
+                "seed": {
+                  "type": "integer"
+                },
+                "session_model": {
+                  "type": "string"
+                },
+                "steps": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "activate_ns": {
+                        "type": "integer"
+                      },
+                      "due_ns": {
+                        "type": "integer"
+                      },
+                      "marker": {
+                        "type": "string"
+                      },
+                      "mutation_id": {
+                        "type": "string"
+                      },
+                      "ordinal": {
+                        "type": "integer"
+                      },
+                      "request": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "arguments": {
+                            "additionalProperties": {},
+                            "type": [
+                              "object",
+                              "null"
+                            ]
+                          },
+                          "operation": {
+                            "type": "string"
+                          },
+                          "tool": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "tool",
+                          "operation",
+                          "arguments"
+                        ],
+                        "type": "object"
+                      },
+                      "request_sha256": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "ordinal",
+                      "activate_ns",
+                      "due_ns",
+                      "marker",
+                      "mutation_id",
+                      "request",
+                      "request_sha256"
+                    ],
+                    "type": "object"
+                  },
+                  "type": [
+                    "array",
+                    "null"
+                  ]
+                },
+                "tool": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "version",
+                "arrival",
+                "mean_interarrival_ns",
+                "probe_period_ns",
+                "count",
+                "seed",
+                "kind",
+                "tool",
+                "language",
+                "mode",
+                "repo",
+                "commit",
+                "file",
+                "callee",
+                "session_model",
+                "not_selected_not_tested",
+                "steps"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "keep_state": {
           "type": "boolean"
