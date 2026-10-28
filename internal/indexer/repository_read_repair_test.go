@@ -44,18 +44,40 @@ func TestRepositoryReadRepairUsesGitBlobIdentity(t *testing.T) {
 	}
 }
 
+func TestReadRepairInertSameBytesCannotClaimEarlierPublication(t *testing.T) {
+	owner := &Indexer{}
+	now := time.Now()
+	observation := ReadRepairObservation{
+		path: "file.go", generation: 2, started: now, finished: now,
+		causesComplete: true, executionSucceeded: true, owner: weak.Make(owner),
+	}
+	// The second reader can validate the exact bytes an earlier unobserved
+	// operation published. That fresh receipt is still not an apply receipt.
+	receipt := fileReadReceipt{readRepairBlobSHA: readRepairBlobSHA([]byte("already published"))}
+	observation.acceptFreshBlob("file.go", receipt.readRepairBlobSHA, receipt.readRepairApplied)
+	if observation.acceptedBlobSHA != "" || observation.AcceptedFor(owner, receipt.readRepairBlobSHA) {
+		t.Fatal("inert same-byte validation claimed an earlier publication")
+	}
+	receipt.readRepairApplied = true
+	observation.acceptFreshBlob("file.go", receipt.readRepairBlobSHA, receipt.readRepairApplied)
+	if !observation.AcceptedFor(owner, receipt.readRepairBlobSHA) {
+		t.Fatal("actual accepted apply lost its content proof")
+	}
+	runtime.KeepAlive(owner)
+}
+
 func TestRepositoryReadRepairAcceptedContentCannotChangeOwners(t *testing.T) {
 	observation := &ReadRepairObservation{path: "target.go"}
 	older := readRepairBlobSHA([]byte("old bytes"))
 	newer := readRepairBlobSHA([]byte("new bytes"))
-	observation.acceptFreshBlob("other.go", older)
+	observation.acceptFreshBlob("other.go", older, true)
 	if observation.acceptedBlobSHA != "" {
 		t.Fatal("another path supplied target content")
 	}
-	observation.acceptFreshBlob("target.go", older)
+	observation.acceptFreshBlob("target.go", older, true)
 	immutable := *observation
-	observation.acceptFreshBlob("target.go", newer)
-	observation.acceptFreshBlob("target.go", older)
+	observation.acceptFreshBlob("target.go", newer, true)
+	observation.acceptFreshBlob("target.go", older, true)
 	if observation.acceptedBlobSHA != "" || !observation.contentAmbiguous || immutable.acceptedBlobSHA != older {
 		t.Fatal("ambiguous content regained authority or changed an earlier snapshot")
 	}
@@ -160,7 +182,7 @@ func TestRepositoryReadRepairContentRequiresSuccessfulAuthorityAndResult(t *test
 		t.Run(test.name, func(t *testing.T) {
 			coordinator := newRepositoryMutationCoordinator(nil)
 			coordinator.readRepairExecutor = func(_ []string, observation *ReadRepairObservation) (*IndexResult, error) {
-				observation.acceptFreshBlob("file.go", readRepairBlobSHA([]byte("accepted bytes")))
+				observation.acceptFreshBlob("file.go", readRepairBlobSHA([]byte("accepted bytes")), true)
 				return test.result, nil
 			}
 			if test.authority {

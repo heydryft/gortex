@@ -79,8 +79,8 @@ func (o ReadRepairObservation) Cause(i int) (session, requestIDKey string, admis
 	return cause.session, cause.requestIDKey, cause.admissionGeneration, true
 }
 
-func (o *ReadRepairObservation) acceptFreshBlob(path, blobSHA string) {
-	if o == nil || o.contentAmbiguous || path != o.path || blobSHA == "" {
+func (o *ReadRepairObservation) acceptFreshBlob(path, blobSHA string, applied bool) {
+	if o == nil || !applied || o.contentAmbiguous || path != o.path || blobSHA == "" {
 		return
 	}
 	if o.acceptedBlobSHA != "" && o.acceptedBlobSHA != blobSHA {

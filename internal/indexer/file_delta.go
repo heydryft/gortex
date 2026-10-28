@@ -142,9 +142,6 @@ func (idx *Indexer) prepareFileDeltaWithAdmissionObserved(filePath string, tryOn
 	if idx.contentProof.active() {
 		probe.rawSHA256 = gitstate.BlobSHA256(src)
 	}
-	if repair != nil && relPath == repair.path {
-		probe.readRepairBlobSHA = readRepairBlobSHA(src)
-	}
 	lang, ok := idx.effectiveLanguage(absPath, src)
 	if !ok {
 		return probe, false, false
@@ -158,6 +155,9 @@ func (idx *Indexer) prepareFileDeltaWithAdmissionObserved(filePath string, tryOn
 	}
 	if _, skip := idx.newContentAdmissionGate().skip(lang, int64(len(src))); skip {
 		return probe, false, false
+	}
+	if repair != nil && relPath == repair.path {
+		probe.readRepairBlobSHA = readRepairBlobSHA(src)
 	}
 	src = idx.transforms.run(relPath, src)
 

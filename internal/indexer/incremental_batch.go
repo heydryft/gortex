@@ -71,6 +71,9 @@ type fileReadReceipt struct {
 	// build that proves its reads (Indexer.contentProof).
 	rawSHA256         string
 	readRepairBlobSHA string
+	// Only a committed stage can supply publisher proof. Inert validation
+	// receipts deliberately leave this false even for identical fresh bytes.
+	readRepairApplied bool
 }
 
 type incrementalFallback struct {
@@ -454,6 +457,7 @@ func (idx *Indexer) reindexIncrementalChunk(
 				absPath: stage.absPath, mtimeKey: stage.mtimeKey, readVersion: stage.readVersion,
 				rawSHA256:         stage.rawSHA256,
 				readRepairBlobSHA: stage.readRepairBlobSHA,
+				readRepairApplied: true,
 			})
 		}
 		// Commit no longer reads the staged source, result, or tree. Return
@@ -477,7 +481,7 @@ func (idx *Indexer) reindexIncrementalChunk(
 	if markerBatch != nil && markerBatch.readRepair != nil {
 		for _, receipt := range receipts {
 			if _, fresh := freshSet[receipt.absPath]; fresh && receipt.readRepairBlobSHA != "" {
-				markerBatch.readRepair.acceptFreshBlob(idx.relKey(receipt.absPath), receipt.readRepairBlobSHA)
+				markerBatch.readRepair.acceptFreshBlob(idx.relKey(receipt.absPath), receipt.readRepairBlobSHA, receipt.readRepairApplied)
 			}
 		}
 	}

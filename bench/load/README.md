@@ -112,7 +112,8 @@ is not a unique publisher identity. This window can overlap the original
 receipt's quiet wait; it is not added to A, B or a later no-op watcher P.
 The relationship to complete requested-background accounting remains
 unavailable. Missing, failed, broad, evicted, rebound or content-mismatched
-observations do not supply that evidence. This initial repair observation
+observations do not supply that evidence. Fresh same-byte inert validation
+does not claim the publication performed by an earlier operation. This initial repair observation
 does not provide deep phase coverage or satisfy the accounting acceptance gate.
 R is retained only by the existing bounded mutation ledger. Evicting the
 original publication recorder's index entry does not erase an accepted ledger
