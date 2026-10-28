@@ -779,14 +779,13 @@ func (l *CheckoutLifecycle) Register(
 		return RegisterResult{}, err
 	}
 	out := RegisterResult{Index: result, AlreadyTracked: result == nil}
-	switch {
-	case result != nil && result.RepoPrefix != "":
-		out.Prefix = result.RepoPrefix
-	default:
-		out.Prefix = l.ResolvePrefix(absPath)
+	requested := config.ResolvePrefix(entry)
+	if result != nil && result.RepoPrefix != "" {
+		requested = result.RepoPrefix
 	}
-	if out.Prefix == "" {
-		out.Prefix = config.ResolvePrefix(entry)
+	out.Prefix, err = l.mi.registeredPrefixForExactRoot(ctx, requested, absPath)
+	if err != nil {
+		return RegisterResult{}, err
 	}
 
 	l.implicitRoots.Delete(out.Prefix)
@@ -824,10 +823,15 @@ func (l *CheckoutLifecycle) RecordImplicit(ctx context.Context, root string) err
 	if l == nil || l.mi == nil {
 		return nil
 	}
-	prefix := l.ResolvePrefix(root)
-	if prefix == "" {
-		return fmt.Errorf("%w: %s", ErrCheckoutNotTracked, root)
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve implicit root %s: %w", root, err)
 	}
+	prefix, err := l.mi.registeredPrefixForExactRoot(ctx, config.ResolvePrefix(config.RepoEntry{Path: abs}), abs)
+	if err != nil {
+		return err
+	}
+	root = abs
 	defer l.beginBatch()()
 
 	identity, err := l.recordCheckout(ctx, prefix, root, TrackSourceImplicit, false)

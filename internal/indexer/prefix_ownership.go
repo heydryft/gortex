@@ -208,11 +208,33 @@ func (mi *MultiIndexer) samplePrefixOwnership(ctx context.Context, snapshot pref
 		out.registeredPrefix = snapshot.owner.prefix
 		return out, nil
 	}
-	out.collision = &PrefixCollisionError{
-		Prefix: snapshot.requested, ExistingPath: snapshot.owner.root, Path: snapshot.root,
-		OwnerMissing: errors.Is(out.owner.err, os.ErrNotExist),
-	}
+	out.collision = newObservedPrefixCollision(snapshot.requested, snapshot.owner.root, snapshot.root, out.owner)
 	return out, out.collision
+}
+
+func newObservedPrefixCollision(prefix, owner, root string, observed prefixStatResult) *PrefixCollisionError {
+	state := "unknown"
+	if errors.Is(observed.err, os.ErrNotExist) {
+		state = "missing"
+	} else if observed.err == nil && observed.info != nil {
+		state = "present"
+	}
+	return &PrefixCollisionError{Prefix: prefix, ExistingPath: owner, Path: root, OwnerMissing: state == "missing", OwnerState: state}
+}
+
+// registeredPrefixForExactRoot deliberately does not use ResolvePrefix: a
+// registered ancestor is useful for reads, but cannot authorize recording a
+// new checkout or graph binding for a descendant that was never indexed.
+func (mi *MultiIndexer) registeredPrefixForExactRoot(ctx context.Context, requested, root string) (string, error) {
+	observation, err := mi.observePrefixOwnership(ctx, requested, root)
+	if err != nil {
+		return "", err
+	}
+	if observation.registeredPrefix != "" {
+		return observation.registeredPrefix, nil
+	}
+	return "", newObservedPrefixCollision(requested, observation.snapshot.owner.root, root,
+		prefixStatResult{err: errPrefixIdentityUnknown})
 }
 
 func sameObservedDirectory(a, b prefixStatResult) bool {

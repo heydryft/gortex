@@ -2601,15 +2601,22 @@ type PrefixCollisionError struct {
 	ExistingPath string
 	Path         string
 	OwnerMissing bool
+	// OwnerState is immutable evidence from the admission observation:
+	// present, missing (ENOENT only), or unknown (timeout/permission/absence
+	// of an owner witness). Formatting never re-probes the filesystem.
+	OwnerState string
 }
 
 // NewPrefixCollisionError samples owner availability once, outside formatting.
 func NewPrefixCollisionError(prefix, owner, root string) *PrefixCollisionError {
-	_, err := os.Stat(owner)
-	return &PrefixCollisionError{Prefix: prefix, ExistingPath: owner, Path: root, OwnerMissing: os.IsNotExist(err)}
+	info, err := os.Stat(owner)
+	return newObservedPrefixCollision(prefix, owner, root, prefixStatResult{info: info, err: err})
 }
 
 func (e *PrefixCollisionError) Error() string {
+	if e.ExistingPath == "" {
+		return fmt.Sprintf("repository root %s has no confirmed registered owner for prefix %q; no checkout or watcher was recorded", e.Path, e.Prefix)
+	}
 	if e.OwnerMissing {
 		return fmt.Sprintf("repository prefix %q is already used by %s, which no longer exists; inspect `gortex untrack %s` before tracking %s again",
 			e.Prefix, e.ExistingPath, e.ExistingPath, e.Path)
