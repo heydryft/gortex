@@ -63,9 +63,10 @@ func TestEditProbeAccountingRejectsMissingApplicableACKAndWrongAttempt(t *testin
 		for _, name := range []string{"caller_result", "disk_write", "edit_control", "middleware", "parse", "publish", "reindex_wait", "reply_prepare"} {
 			ackPhases[name], ackStates[name] = json.Number("1"), "measured"
 		}
-		p, b := map[string]any{}, map[string]any{}
+		p, b, pStates := map[string]any{}, map[string]any{}, map[string]any{}
 		for _, name := range []string{"gate_wait", "patch_parse", "apply", "search_lap", "resolve", "mtimes", "derived", "attempt_setup", "patch_inspection", "executor_control", "attempt_finalize", "cohort_admission", "lane_wait"} {
 			p[name], b[name] = json.Number("1"), json.Number("1")
+			pStates[name] = "measured"
 		}
 		for _, name := range requestedBackgroundLapNamesForProbe {
 			b[name] = json.Number("1")
@@ -74,21 +75,23 @@ func TestEditProbeAccountingRejectsMissingApplicableACKAndWrongAttempt(t *testin
 			"receipt": "receipt-a", "reindex_generation": json.Number("1"), "applied_generation": json.Number("2"),
 			"acknowledgement":       map[string]any{"rpc_id": "rpc-a", "disjoint_observed_intervals": true, "caller_response_ready_ms": json.Number("8"), "observed_execution_ms": ackPhases, "phase_states": ackStates},
 			"publication_phases":    map[string]any{"key": "original"},
-			"coalesced_publication": map[string]any{"requested_generation": json.Number("1"), "applied_generation": json.Number("2"), "scope": "independent_physical_winner_serving_coalesced_receipt", "publication_phases": map[string]any{"ticket": json.Number("2"), "source": "canonical_coalesced_attempt", "key": "winner"}, "timings": map[string]any{"phase_timing": map[string]any{"patch_wall_ms": json.Number("13"), "patch_accounting": map[string]any{"observed_partition_complete": true, "attempt_ticket": json.Number("2"), "attempt_retry": json.Number("0"), "phases_ms": p}}}},
+			"coalesced_publication": map[string]any{"requested_generation": json.Number("1"), "applied_generation": json.Number("2"), "scope": "independent_physical_winner_serving_coalesced_receipt", "publication_phases": map[string]any{"ticket": json.Number("2"), "source": "canonical_coalesced_attempt", "key": "winner"}, "timings": map[string]any{"phase_timing": map[string]any{"patch_wall_ms": json.Number("13"), "patch_accounting": map[string]any{"observed_partition_complete": true, "attempt_ticket": json.Number("2"), "attempt_retry": json.Number("0"), "phases_ms": p, "phase_states": pStates}}}},
 			"requested_background":  map[string]any{"requested_generation": json.Number("1"), "applied_generation": json.Number("2"), "observed_partition_complete": true, "scope": "accepted_scheduling_call_entry_to_serving_attempt_return", "coverage": "one_canceled_timer_one_native_successor", "sum_state": "partial", "background_wall_ms": json.Number("20"), "phases_ms": b},
 		}
 	}
 	if got := checkEditProbeAccounting(fixture(), "receipt-a"); got.State != "observed_single_window_checks_pass" {
 		t.Fatalf("valid fixture: %+v", got)
 	}
-	for _, name := range []string{"missing_ack", "wrong_retry", "wrong_owner"} {
+	for _, name := range []string{"missing_ack", "wrong_retry", "wrong_owner", "unmeasured_physical"} {
 		t.Run(name, func(t *testing.T) {
 			body := fixture()
 			if name == "missing_ack" {
 				delete(body["acknowledgement"].(map[string]any)["observed_execution_ms"].(map[string]any), "parse")
 			} else {
 				p := body["coalesced_publication"].(map[string]any)["timings"].(map[string]any)["phase_timing"].(map[string]any)["patch_accounting"].(map[string]any)
-				if name == "wrong_retry" {
+				if name == "unmeasured_physical" {
+					p["phase_states"].(map[string]any)["apply"] = "not_observed"
+				} else if name == "wrong_retry" {
 					p["attempt_retry"] = json.Number("1")
 				} else {
 					p["attempt_ticket"] = json.Number("9")

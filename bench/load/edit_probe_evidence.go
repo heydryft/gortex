@@ -268,8 +268,9 @@ func checkEditProbeAccounting(status map[string]any, receipt string) editProbeAc
 		fail("applicable physical P unavailable")
 	}
 	pPhases, _ := pAccounting["phases_ms"].(map[string]any)
+	pStates, _ := pAccounting["phase_states"].(map[string]any)
 	for _, name := range []string{"gate_wait", "patch_parse", "apply", "search_lap", "resolve", "mtimes", "derived", "attempt_setup", "patch_inspection", "executor_control", "attempt_finalize", "cohort_admission", "lane_wait"} {
-		if pPhases[name] == nil {
+		if pPhases[name] == nil || pStates[name] != "measured" {
 			fail("missing applicable P phase " + name)
 		}
 	}
