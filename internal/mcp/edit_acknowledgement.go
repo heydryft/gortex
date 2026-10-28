@@ -27,6 +27,7 @@ type editAcknowledgement struct {
 	envelope    editAcknowledgementEnvelope
 	dispatch    daemon.MCPDispatchTiming
 	hasDispatch bool
+	parserScope string
 }
 
 type editAcknowledgementKey struct{}
@@ -67,6 +68,7 @@ type editAcknowledgementSnapshot struct {
 	ReindexWait          editAcknowledgementLapSnapshot
 	Middleware           editAcknowledgementLapSnapshot
 	ReplyPrepare         editAcknowledgementLapSnapshot
+	ParserScope          string
 	LapsDisjoint         bool
 }
 
@@ -128,7 +130,7 @@ func (a *editAcknowledgement) finishReplyAt(at time.Time, outcome string) {
 
 func (a *editAcknowledgement) snapshot() editAcknowledgementSnapshot {
 	a.mu.Lock()
-	actual, reply, outcome, laps, envelope := a.actual, a.reply, a.outcome, a.laps, a.envelope
+	actual, reply, outcome, laps, envelope, parserScope := a.actual, a.reply, a.outcome, a.laps, a.envelope, a.parserScope
 	a.mu.Unlock()
 	result := editAcknowledgementSnapshot{
 		RPCID: a.id, Scope: "mcp_bound_call", ReplyOutcome: outcome,
@@ -139,6 +141,10 @@ func (a *editAcknowledgement) snapshot() editAcknowledgementSnapshot {
 	result.ActualWallMS, result.ActualState = editAcknowledgementWall(a.entered, actual)
 	result.ActualFinishedLate = result.ReplyState == "measured" && result.ActualState == "measured" && actual.After(reply)
 	result.ParseGate = laps.snapshot(editAckParseGate, a.entered, reply, actual)
+	result.ParserScope = parserScope
+	if result.ParseGate.Started == 0 && (parserScope == "not_applicable_text_splice" || parserScope == "unsupported_non_go_move") {
+		result.ParseGate.State = "not_applicable"
+	}
 	result.DiskWrite = laps.snapshot(editAckDiskWrite, a.entered, reply, actual)
 	result.TicketAdmission = laps.snapshot(editAckTicketAdmission, a.entered, reply, actual)
 	result.ReindexWait = laps.snapshot(editAckReindexWait, a.entered, reply, actual)

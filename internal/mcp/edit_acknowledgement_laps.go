@@ -56,7 +56,10 @@ type editAcknowledgementLap struct {
 }
 
 func (s *Server) beginAcknowledgementLap(ctx context.Context, kind editAcknowledgementLapKind) editAcknowledgementLap {
-	a := editAcknowledgementFrom(ctx, s)
+	return beginEditAcknowledgementLap(editAcknowledgementFrom(ctx, s), kind)
+}
+
+func beginEditAcknowledgementLap(a *editAcknowledgement, kind editAcknowledgementLapKind) editAcknowledgementLap {
 	if a == nil {
 		return editAcknowledgementLap{} // raw/read/native callers do not sample a clock
 	}
@@ -67,6 +70,7 @@ func (s *Server) beginAcknowledgementLap(ctx context.Context, kind editAcknowled
 // their existing enable/refusal/override policy; unsupported languages remain
 // the gate's existing Checked=false verdict, not a new parse implementation.
 func (s *Server) checkAcknowledgedParseGate(ctx context.Context, path string, before, after []byte) parseGateResult {
+	s.noteAcknowledgementParser(ctx, "old_new_parse_gate")
 	lap := s.beginAcknowledgementLap(ctx, editAckParseGate)
 	defer lap.finish()
 	result := checkParseGate(path, before, after)

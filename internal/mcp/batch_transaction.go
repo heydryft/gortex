@@ -1157,10 +1157,10 @@ func (s *Server) runBatchTransaction(ctx context.Context, edits []batchEditItem,
 			if targetErr := s.validateBatchCreateTarget(ctx, path, buffer.relPath); targetErr != nil {
 				commitErr = targetErr
 			} else {
-				commitErr = writer(path, buffer.content, buffer.mode)
+				commitErr = s.writeAcknowledgedBatchFile(ctx, writer, path, buffer.content, buffer.mode)
 			}
 		} else {
-			commitErr = writer(path, buffer.content, buffer.mode)
+			commitErr = s.writeAcknowledgedBatchFile(ctx, writer, path, buffer.content, buffer.mode)
 		}
 		if commitErr != nil {
 			message := fmt.Sprintf("could not commit %s: %v", buffer.relPath, commitErr)
@@ -1176,13 +1176,13 @@ func (s *Server) runBatchTransaction(ctx context.Context, edits []batchEditItem,
 		if err := guardCheckoutMutationPath(ctx, path); err != nil {
 			return finishCommitFailure(buffer.relPath, err.Error()), nil
 		}
-		if commitErr := remover(path); commitErr != nil {
+		if commitErr := s.removeAcknowledgedBatchFile(ctx, remover, path); commitErr != nil {
 			message := fmt.Sprintf("could not commit %s: %v", buffer.relPath, commitErr)
 			return finishCommitFailure(buffer.relPath, message), nil
 		}
 		observeEditSourceEffect(ctx, buffer.existsBefore, true)
 	}
-	if syncErr := s.syncBatchDirectories(batchPathDirectories(orderedPaths)...); syncErr != nil {
+	if syncErr := s.syncAcknowledgedBatchDirectories(ctx, batchPathDirectories(orderedPaths)...); syncErr != nil {
 		failedPath := buffers[orderedPaths[len(orderedPaths)-1]].relPath
 		message := "could not persist committed files: " + syncErr.Error()
 		return finishCommitFailure(failedPath, message), nil
@@ -1261,11 +1261,13 @@ func (s *Server) batchTransactionStatus(ctx context.Context, transactionID strin
 	return state.snapshot(), nil
 }
 
-func (s *Server) beginBatchGraphRefresh(absPath string) mutationReindexOutcome {
-	ctx := context.Background()
+func (s *Server) beginBatchGraphRefresh(observationCtx context.Context, absPath string) mutationReindexOutcome {
+	ctx := context.Background() // preserve the original scheduler's lifetime
 	if watcher := s.currentWatcher(); watcher != nil {
 		if scheduler, ok := watcher.(mutationScheduler); ok {
+			lap := s.beginAcknowledgementLap(observationCtx, editAckTicketAdmission)
 			ticket, err := scheduler.EnqueueFileMutation(ctx, absPath)
+			lap.finish()
 			if err != nil {
 				return mutationReindexOutcome{Err: err}
 			}
@@ -1379,7 +1381,9 @@ func (s *Server) refreshBatchGraph(ctx context.Context, state *batchTransactionS
 			for _, file := range receipt.Files {
 				paths = append(paths, file.Path)
 			}
+			lap := s.beginAcknowledgementLap(ctx, editAckTicketAdmission)
 			tickets, err := scheduler.EnqueueFileMutations(context.Background(), paths)
+			lap.finish()
 			if err != nil {
 				for _, path := range paths {
 					outcomes[path] = mutationReindexOutcome{Err: err}
@@ -1420,7 +1424,7 @@ func (s *Server) refreshBatchGraph(ctx context.Context, state *batchTransactionS
 			file.ReindexReceipt = ""
 			file.ReindexGeneration = 0
 		}
-		outcome := s.beginBatchGraphRefresh(file.Path)
+		outcome := s.beginBatchGraphRefresh(ctx, file.Path)
 		outcomes[file.Path] = outcome
 		file.ReindexReceipt = outcome.Receipt
 		file.ReindexGeneration = outcome.Generation
@@ -1509,6 +1513,7 @@ func (s *Server) finishBatchTransaction(state *batchTransactionState, receipt ba
 }
 
 func (s *Server) handleAtomicBatchEdit(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	s.noteAcknowledgementParser(ctx, "not_applicable_text_splice")
 	args := req.GetArguments()
 	transactionID, _ := args["transaction_id"].(string)
 	statusOnly, _ := args["status_only"].(bool)
