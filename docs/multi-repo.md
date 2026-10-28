@@ -59,6 +59,18 @@ would disappear on restart. Set `name:` in the global config and run
 `gortex daemon reload`. Tracking a configured but unloaded root without a name
 keeps its configured name.
 
+Collisions use the `prefix_collision` code across control, MCP and probe
+responses, with the prefix, owner path and captured owner state. A missing
+owner is different from an owner whose availability could not be established:
+only a confirmed missing owner produces advice to inspect its untrack preview.
+The colliding path is never a remedy for removing the owner's corpus.
+
+Canonical aliases keep a configured root's pinned name and workspace. Before
+startup has resolved an arbitrary configured alias, a new unmatched root may
+receive an identity-resolution retry instead of registration. This preserves
+one physical root's ownership without scanning every configured filesystem on
+each track request.
+
 Alternatively, `gortex untrack <absolute-path>` can remove an exact configured
 root that the daemon proves is not loaded, then reload the config. It does not
 untrack a containing live root or start retirement of an implicit live root.
