@@ -812,10 +812,16 @@ func (l *CheckoutLifecycle) Register(
 // the next boot's seeding would read back as explicit configuration and mint a
 // manual_config intent for, turning an intent-less observation into intent one
 // restart later.
-func (l *CheckoutLifecycle) RecordImplicit(ctx context.Context, root string) error {
+func (l *CheckoutLifecycle) RecordImplicit(ctx context.Context, root string) (err error) {
 	if l == nil || l.mi == nil {
 		return nil
 	}
+	defer func() {
+		var collision *PrefixCollisionError
+		if errors.As(err, &collision) {
+			l.mi.logCollision(collision)
+		}
+	}()
 	if root == "" {
 		return fmt.Errorf("%w: empty implicit repository root", ErrCheckoutNotTracked)
 	}
