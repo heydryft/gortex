@@ -326,6 +326,15 @@ func (l *CheckoutLifecycle) indexPromotedCorpus(
 		}
 		result, err := l.mi.TrackRepoCtx(WithIndexOrigin(ctx, "checkout_promotion"), config.RepoEntry{Path: checkout.RootPath, Name: prefix})
 		if err != nil {
+			// Another registration may have claimed this exact root under a
+			// different name after promotion selected its prefix. Configured
+			// name validation then refuses Track before its normal ownership
+			// check. Preserve the typed collision for this established owner;
+			// neither the requested corpus nor its rollback is authorized.
+			observation, ownerErr := l.mi.observePrefixOwnership(ctx, prefix, checkout.RootPath)
+			if ownerErr == nil && observation.registeredPrefix != "" && observation.registeredPrefix != prefix {
+				return nil, resampled, owned, newObservedPrefixCollision(prefix, checkout.RootPath, checkout.RootPath, observation.candidate)
+			}
 			return nil, resampled, owned, err
 		}
 		owned, err = l.mi.prefixOwnerForRoot(ctx, prefix, checkout.RootPath)
