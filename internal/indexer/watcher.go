@@ -2008,6 +2008,7 @@ func (w *Watcher) runPointMutationObserved(path string, kind ChangeKind, generat
 	publication = w.beginPointPublication(path, generation)
 	if publication != nil && observation != nil {
 		publication.stamps.debounce = observation.debounce // immutable callback-owned pair, exact generation only
+		publication.stamps.startAttemptControl(observation.entered)
 	}
 	if w.pointMutationClaimed != nil {
 		w.pointMutationClaimed(path)
@@ -2747,6 +2748,12 @@ func (w *Watcher) patchGraphWithReceiptStateRawModern(
 	pending *symbolChangeNotification,
 	fanout *DerivedFanoutCompleteness,
 ) error {
+	stamps := PublicationStampsFrom(ctx)
+	if stamps.switchAttemptControl(patchInspection) {
+		// Registered before the existing patchMu unlock: early-return inspection
+		// includes its real unlock, then outer mutation finalization continues.
+		defer stamps.switchAttemptControl(patchAttemptFinalize)
+	}
 	if !w.generationCurrent(path, generation) {
 		return errMutationSuperseded
 	}
@@ -2808,9 +2815,9 @@ func (w *Watcher) patchGraphWithReceiptStateRawModern(
 	// "complete" over a catch-up that was cut.
 	observation := beginDerivedFanoutObservation(idx)
 	defer observation.close()
-	markPointPublication(ctx, PublicationPatchExecutionStarted)
+	stamps.switchAttemptControlAt(patchExecutorControl, markPointPublication(ctx, PublicationPatchExecutionStarted))
 	result, err := w.reindexPointPathRaw(idx, path, PublicationStampsFrom(ctx))
-	markPointPublication(ctx, PublicationPatchExecutionFinished)
+	stamps.switchAttemptControlAt(patchAttemptFinalize, markPointPublication(ctx, PublicationPatchExecutionFinished))
 	observed := observation.close()
 	if err != nil {
 		// A failed patch publishes no fan-out verdict. Whatever the bounded

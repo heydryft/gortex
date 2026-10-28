@@ -50,6 +50,7 @@ func (s *PublicationStamps) recordCanonicalLaneWaitAt(acquired bool, at time.Tim
 			return
 		}
 		pair.started = at
+		s.patchLaps.beginObservedOuterLocked(patchRepositoryLane, at)
 		return
 	}
 	if pair.started.IsZero() || !pair.acquired.IsZero() || at.Before(pair.started) {
@@ -57,6 +58,7 @@ func (s *PublicationStamps) recordCanonicalLaneWaitAt(acquired bool, at time.Tim
 		return
 	}
 	pair.acquired = at
+	s.patchLaps.endObservedOuterLocked(patchRepositoryLane, pair.started, at)
 }
 
 func (p canonicalLaneWait) freeze(origin time.Time) canonicalLaneWaitEvidence {

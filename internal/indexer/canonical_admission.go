@@ -47,6 +47,7 @@ func (s *PublicationStamps) beginCanonicalAdmissionAt(kind canonicalAdmissionKin
 	} else {
 		pair.started = at
 	}
+	s.patchLaps.beginObservedOuterLocked(patchCohortAdmission+canonicalPatchLap(kind), at)
 	return canonicalAdmissionSpan{stamps: s, kind: kind}
 }
 
@@ -71,6 +72,7 @@ func (span *canonicalAdmissionSpan) endAt(at time.Time) {
 		return
 	}
 	pair.finished = at
+	s.patchLaps.endObservedOuterLocked(patchCohortAdmission+canonicalPatchLap(span.kind), pair.started, at)
 }
 
 func (s *PublicationStamps) freezeCanonicalAdmissions(origin time.Time) canonicalAdmissionEvidence {

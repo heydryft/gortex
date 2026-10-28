@@ -38,8 +38,11 @@ func (p *pointPublicationAttempt) withContext(ctx context.Context) context.Conte
 	return context.WithValue(ctx, publicationStampsKey{}, p.stamps)
 }
 
-func markPointPublication(ctx context.Context, phase PublicationPhase) {
+func markPointPublication(ctx context.Context, phase PublicationPhase) time.Time {
 	if stamps := PublicationStampsFrom(ctx); stamps != nil {
-		stamps.markAt(phase, time.Now())
+		at := time.Now()
+		stamps.markAt(phase, at)
+		return at
 	}
+	return time.Time{}
 }

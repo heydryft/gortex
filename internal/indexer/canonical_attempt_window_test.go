@@ -30,6 +30,7 @@ func TestCanonicalAttemptWindowFinishesAfterDoneAndCohortRelease(t *testing.T) {
 	record.Mark(PublicationTicketCompleted)
 	early := record.Snapshot()
 	earlyTimings := early.EditTimings()
+	require.Equal(t, "measured", earlyTimings.States["derived"], "open finalization must not invalidate the frozen completed executor")
 	require.Nil(t, earlyTimings.Window.PatchWallMS, "actual return is still blocked on cohort release")
 	require.Empty(t, logs.FilterMessage("graph patch attempt complete").All())
 	releaseAt := time.Now()

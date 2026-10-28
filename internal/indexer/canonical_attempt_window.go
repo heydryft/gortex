@@ -47,6 +47,7 @@ func (p *PublicationPhaseRecord) completePhysicalAttempt(stamps *PublicationStam
 	valid := stamps.patchLaps != nil
 	var ticket uint64
 	if valid {
+		stamps.patchLaps.finishAttemptControlLocked(end)
 		ticket = stamps.patchLaps.ticket
 	}
 	for _, mark := range stamps.marks {

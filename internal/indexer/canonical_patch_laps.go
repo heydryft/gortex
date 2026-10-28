@@ -17,6 +17,17 @@ const (
 	// Supplementary actual work, kept private until its additive projection is
 	// reviewed. It is not a replacement for any requested patch lap.
 	patchBookkeeping
+	canonicalDeepLapCount
+)
+
+const (
+	patchAttemptSetup canonicalPatchLap = canonicalDeepLapCount + iota
+	patchInspection
+	patchExecutorControl
+	patchAttemptFinalize
+	patchCohortAdmission
+	patchBatchAdmission
+	patchRepositoryLane
 	canonicalPatchLapCount
 )
 
@@ -32,12 +43,17 @@ type canonicalLapTotal struct {
 }
 
 type canonicalPatchLaps struct {
-	laps             [canonicalPatchLapCount]canonicalLapTotal
-	lastEnd          time.Time
-	active           int
-	invalid          bool
-	origin, enqueued time.Time // immutable original admission identity, for attempt logs
-	ticket           uint64
+	laps                             [canonicalPatchLapCount]canonicalLapTotal
+	lastEnd                          time.Time
+	active                           int
+	activeKind                       canonicalPatchLap
+	activeStarted                    time.Time
+	controlObserved, controlFinished bool
+	controlKind                      canonicalPatchLap
+	attemptStarted, attemptFinished  time.Time
+	invalid                          bool
+	origin, enqueued                 time.Time // immutable original admission identity, for attempt logs
+	ticket                           uint64
 }
 
 func (p *PublicationPhaseRecord) newCanonicalPatchStamps() *PublicationStamps {
@@ -70,6 +86,14 @@ func (s *PublicationStamps) beginPatchLapAt(lap canonicalPatchLap, at time.Time)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p := s.patchLaps
+	if p.controlObserved && !p.controlFinished && p.active == 1 && isAttemptControl(p.activeKind) {
+		p.closeAttemptControlLocked(at)
+	}
+	p.beginLapLocked(lap, at)
+	return canonicalLapSpan{stamps: s, lap: lap, started: at}
+}
+
+func (p *canonicalPatchLaps) beginLapLocked(lap canonicalPatchLap, at time.Time) {
 	v := &p.laps[lap]
 	if at.IsZero() || p.active != 0 || !p.lastEnd.IsZero() && at.Before(p.lastEnd) {
 		p.invalid = true
@@ -78,8 +102,23 @@ func (s *PublicationStamps) beginPatchLapAt(lap canonicalPatchLap, at time.Time)
 		v.first = at
 	}
 	v.begun++
+	if p.active == 0 {
+		p.activeKind, p.activeStarted = lap, at
+	}
 	p.active++
-	return canonicalLapSpan{stamps: s, lap: lap, started: at}
+}
+
+func (p *canonicalPatchLaps) endLapLocked(lap canonicalPatchLap, start, at time.Time) {
+	v := &p.laps[lap]
+	if at.IsZero() || at.Before(start) || p.active != 1 || p.activeKind != lap || !p.activeStarted.Equal(start) {
+		p.invalid = true
+	} else {
+		v.total += at.Sub(start)
+	}
+	v.last = at
+	v.done++
+	p.active--
+	p.lastEnd = at
 }
 
 func (span *canonicalLapSpan) end() time.Time {
@@ -98,16 +137,10 @@ func (span *canonicalLapSpan) endAt(at time.Time) time.Time {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p := s.patchLaps
-	v := &p.laps[span.lap]
-	if at.Before(span.started) || at.IsZero() || p.active != 1 {
-		p.invalid = true
-	} else {
-		v.total += at.Sub(span.started)
+	p.endLapLocked(span.lap, span.started, at)
+	if p.active == 0 {
+		p.openAttemptControlLocked(at)
 	}
-	v.last = at
-	v.done++
-	p.active--
-	p.lastEnd = at
 	return at
 }
 
@@ -131,15 +164,15 @@ type canonicalLapEvidence struct {
 }
 
 type canonicalPatchEvidence struct {
-	laps    [canonicalPatchLapCount]canonicalLapEvidence
+	laps    [canonicalDeepLapCount]canonicalLapEvidence
 	invalid bool
 }
 
 // freeze converts only same-process monotonic readings, never wall strings.
 // Called under the collector lock; the returned value has no mutable aliases.
 func (p *canonicalPatchLaps) freeze(origin time.Time) canonicalPatchEvidence {
-	out := canonicalPatchEvidence{invalid: p.invalid || p.active != 0}
-	for i, v := range p.laps {
+	out := canonicalPatchEvidence{invalid: p.invalid || p.active != 0 && !(p.controlObserved && p.active == 1 && isAttemptControl(p.activeKind))}
+	for i, v := range p.laps[:canonicalDeepLapCount] {
 		out.laps[i] = canonicalLapEvidence{totalNS: int64(v.total), begun: v.begun, done: v.done, incomplete: v.incomplete}
 		if v.begun != 0 {
 			out.laps[i].firstNS, out.laps[i].lastNS = v.first.Sub(origin).Nanoseconds(), v.last.Sub(origin).Nanoseconds()
