@@ -70,8 +70,12 @@ type editAcknowledgementSnapshot struct {
 	ReindexWait          editAcknowledgementLapSnapshot
 	Middleware           editAcknowledgementLapSnapshot
 	ReplyPrepare         editAcknowledgementLapSnapshot
+	EditControl          editAcknowledgementLapSnapshot
+	CallerResult         editAcknowledgementLapSnapshot
 	ParserScope          string
 	LapsDisjoint         bool
+	replyNS              int64
+	hasReplyNS           bool
 }
 
 func editAcknowledgementFrom(ctx context.Context, owner *Server) *editAcknowledgement {
@@ -141,6 +145,9 @@ func (a *editAcknowledgement) snapshot() editAcknowledgementSnapshot {
 		DispatcherReplyState: "unavailable_dispatcher_interface",
 	}
 	result.ReplyWallMS, result.ReplyState = editAcknowledgementWall(a.entered, reply)
+	if result.ReplyState == "measured" {
+		result.replyNS, result.hasReplyNS = reply.Sub(a.entered).Nanoseconds(), true
+	}
 	result.ActualWallMS, result.ActualState = editAcknowledgementWall(a.entered, actual)
 	result.ActualFinishedLate = result.ReplyState == "measured" && result.ActualState == "measured" && actual.After(reply)
 	result.ParseGate = laps.snapshot(editAckParseGate, a.entered, reply, actual)
@@ -151,6 +158,8 @@ func (a *editAcknowledgement) snapshot() editAcknowledgementSnapshot {
 	result.DiskWrite = laps.snapshot(editAckDiskWrite, a.entered, reply, actual)
 	result.TicketAdmission = laps.snapshot(editAckTicketAdmission, a.entered, reply, actual)
 	result.ReindexWait = laps.snapshot(editAckReindexWait, a.entered, reply, actual)
+	result.EditControl = laps.snapshot(editAckLeafControl, a.entered, reply, actual)
+	result.CallerResult = acknowledgementCallerResult(a.entered, actual, reply)
 	result.LapsDisjoint = !laps.overlap
 	if a.hasDispatch {
 		if a.dispatch.Granted.Before(a.dispatch.Entered) || a.entered.Before(a.dispatch.Granted) {

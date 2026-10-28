@@ -37,6 +37,7 @@ func runAcknowledgedLeaf(a *editAcknowledgement, ctx context.Context, req mcp.Ca
 	defer func() {
 		a.mu.Lock()
 		a.envelope.leafFinished = time.Now()
+		a.closeEditControlLocked(a.envelope.leafFinished)
 		a.mu.Unlock()
 	}()
 	return h(ctx, req)
@@ -49,6 +50,8 @@ func (a *editAcknowledgement) beginLeaf() bool {
 		return false
 	}
 	a.envelope.leafStarted = time.Now()
+	a.laps.controlObserved = true
+	a.openEditControlLocked(a.envelope.leafStarted)
 	return true
 }
 
@@ -101,5 +104,6 @@ func acknowledgementEnvelopeInterval(start, end, entered, reply, actual time.Tim
 	}
 	ackMS := ms
 	out.AckMS, out.State = &ackMS, "measured"
+	out.ackNS, out.hasAckNS = end.Sub(start).Nanoseconds(), true
 	return out
 }

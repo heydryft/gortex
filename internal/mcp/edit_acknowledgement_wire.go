@@ -52,10 +52,10 @@ func buildAcknowledgementPayload(snapshot *editAcknowledgementSnapshot, state st
 		DispatcherScope: "queue_and_preamble_precede_bound_call_subtotal", DispatcherReplyState: state, ParserScope: "unobserved",
 		CombinedAckPatchSumState: "not_additive_overlapping_lifetimes",
 		ExistingPhaseScope:       "legacy_per_receipt_publication", PublicationResidualState: "legacy_per_receipt_publication",
-		PhasesMS: make(map[string]*float64, 9), PhaseStates: make(map[string]string, 9),
-		Counts: make(map[string]acknowledgementLapCount, 6), ObservedExecutionMS: make(map[string]*float64, 6),
+		PhasesMS: make(map[string]*float64, 11), PhaseStates: make(map[string]string, 11),
+		Counts: make(map[string]acknowledgementLapCount, 8), ObservedExecutionMS: make(map[string]*float64, 8),
 	}
-	for _, name := range []string{"dispatcher_queue", "dispatcher_preamble", "middleware", "parse", "disk_write", "publish", "reindex_wait", "reply_prepare", "transport"} {
+	for _, name := range []string{"dispatcher_queue", "dispatcher_preamble", "middleware", "parse", "disk_write", "publish", "reindex_wait", "edit_control", "reply_prepare", "caller_result", "transport"} {
 		out.PhasesMS[name], out.PhaseStates[name] = nil, state
 	}
 	if snapshot == nil {
@@ -86,11 +86,16 @@ func buildAcknowledgementPayload(snapshot *editAcknowledgementSnapshot, state st
 	}
 	out.PhaseStates["transport"] = "unavailable_boundary"
 	var subtotal float64
+	var subtotalNS int64
+	exact := snapshot.hasReplyNS
 	observed, invalid := 0, false
+	if exact && (snapshot.replyNS < 0 || snapshot.ReplyWallMS == nil || float64(snapshot.replyNS)/1e6 != *snapshot.ReplyWallMS) {
+		invalid = true
+	}
 	for name, lap := range map[string]editAcknowledgementLapSnapshot{
-		"middleware": snapshot.Middleware, "reply_prepare": snapshot.ReplyPrepare,
+		"middleware": snapshot.Middleware, "reply_prepare": snapshot.ReplyPrepare, "caller_result": snapshot.CallerResult,
 		"parse": snapshot.ParseGate, "disk_write": snapshot.DiskWrite,
-		"publish": snapshot.TicketAdmission, "reindex_wait": snapshot.ReindexWait,
+		"publish": snapshot.TicketAdmission, "reindex_wait": snapshot.ReindexWait, "edit_control": snapshot.EditControl,
 	} {
 		if lap.State == "" {
 			lap.State = "unobserved"
@@ -109,9 +114,21 @@ func buildAcknowledgementPayload(snapshot *editAcknowledgementSnapshot, state st
 			invalid = true
 		}
 		if lap.AckMS != nil {
+			if !lap.hasAckNS {
+				exact = false // legacy synthetic snapshots have no actual nanosecond evidence
+			} else if lap.ackNS < 0 || float64(lap.ackNS)/1e6 != *lap.AckMS || subtotalNS > (1<<63-1)-lap.ackNS {
+				invalid = true
+			} else {
+				subtotalNS += lap.ackNS
+			}
 			subtotal += *lap.AckMS
 			observed++
 		}
+	}
+	if exact {
+		// Compare/sum observed integers, not rounded per-lap milliseconds.
+		// No tolerance, clamp or unobserved remainder is introduced.
+		subtotal = float64(subtotalNS) / 1e6
 	}
 	switch {
 	case !snapshot.LapsDisjoint:
@@ -122,10 +139,13 @@ func buildAcknowledgementPayload(snapshot *editAcknowledgementSnapshot, state st
 		out.SumState = "pending_or_unavailable_reply"
 	case observed == 0:
 		out.SumState = "no_ack_intervals_observed"
-	case subtotal < 0 || subtotal > *snapshot.ReplyWallMS:
+	case exact && (subtotalNS < 0 || subtotalNS > snapshot.replyNS) || !exact && (subtotal < 0 || subtotal > *snapshot.ReplyWallMS):
 		out.SumState = "invalid_total"
 	default:
 		unattributed := *snapshot.ReplyWallMS - subtotal
+		if exact {
+			unattributed = float64(snapshot.replyNS-subtotalNS) / 1e6
+		}
 		out.SubtotalMS, out.UnattributedMS, out.SumState = &subtotal, &unattributed, "partial"
 	}
 	return out
@@ -139,7 +159,7 @@ func attachAcknowledgementPayload(payload map[string]any, snapshot *editAcknowle
 	}
 	phases, _ := payload["phases_ms"].(map[string]*float64)
 	states, _ := payload["phase_states"].(map[string]string)
-	for _, name := range []string{"dispatcher_queue", "middleware", "parse", "disk_write", "publish", "reindex_wait"} {
+	for _, name := range []string{"dispatcher_queue", "middleware", "parse", "disk_write", "publish", "reindex_wait", "edit_control", "caller_result"} {
 		phases[name], states[name] = ack.PhasesMS[name], ack.PhaseStates[name]
 	}
 	window := payload["phase_timing"].(indexer.EditTimingWindow)

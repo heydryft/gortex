@@ -62,11 +62,11 @@ func TestAcknowledgementWirePartialSubtotalHasSeparateDenominator(t *testing.T) 
 	require.NoError(t, err)
 	var wire map[string]any
 	require.NoError(t, json.Unmarshal(encoded, &wire))
-	require.Len(t, wire["phases_ms"], 15)
+	require.Len(t, wire["phases_ms"], 19) // original required keys plus four explicit measured additions
 	wireAck := wire["acknowledgement"].(map[string]any)
 	phases := wireAck["phases_ms"].(map[string]any)
-	require.Len(t, phases, 9)
-	for _, name := range []string{"dispatcher_queue", "dispatcher_preamble", "middleware", "reply_prepare", "transport"} {
+	require.Len(t, phases, 11)
+	for _, name := range []string{"dispatcher_queue", "dispatcher_preamble", "middleware", "edit_control", "reply_prepare", "caller_result", "transport"} {
 		require.Contains(t, phases, name)
 		require.Nil(t, phases[name], name)
 	}

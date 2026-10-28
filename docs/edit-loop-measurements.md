@@ -13,10 +13,30 @@ lap has been measured, or that the phase-sum acceptance criterion is met.
 `phases_ms` always lists these keys for a found mutation receipt:
 
 - Acknowledgement: `dispatcher_queue`, `middleware`, `parse`, `disk_write`,
-  `publish`, and the explicit additional `reindex_wait`.
+  `publish`, and the explicit additions `reindex_wait`, `edit_control`,
+  and `caller_result`.
 - Patch: `debounce`, `lane_wait`, `gate_wait`, `patch_parse`, `apply`,
   `search_lap`, `resolve`, `mtimes`, and `derived`, plus the additive actual
   `cohort_admission` and `batch_admission` envelopes.
+
+`edit_control` records actual leaf preparation, validation, formatting, receipt
+and response-control intervals online. It opens at leaf entry, pauses around
+each existing parse/write/admission/wait operation, resumes at that operation's
+actual end, and closes at leaf return. Repeated chunks use fixed scalar totals
+and ordering checks. A parse guard that is not applicable keeps that parse
+verdict; its actual dispatch interval is control work. No remainder becomes
+measured work. Pre-leaf refusal has no invented leaf interval.
+
+`caller_result` is the actual handler-finish through caller-facing reply-finish
+interval: bound-handler delivery/finalization before transport serialization.
+It starts where `reply_prepare` ends. A detached reply before physical handler
+finish has unavailable/outside-window control or caller-result evidence; no
+post-reply work is clipped into ACK. The original RPC identity, per-file receipt
+ownership and requested phase meanings remain intact. Subtotals stay labelled
+partial pending complete-window controls and actual100-edit validation. Observed
+production totals and containment use integer nanoseconds before conversion to
+public milliseconds; fractional rounding never authorizes tolerance or clipping.
+A missing actual reading retains conservative unavailable/partial evidence.
 
 A duration is a monotonic millisecond number, or `null`. `phase_states` gives
 the evidence for each key:

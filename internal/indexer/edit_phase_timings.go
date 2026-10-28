@@ -26,7 +26,7 @@ type EditTimingWindow struct {
 }
 
 var editAckPhaseNames = [...]string{
-	"dispatcher_queue", "middleware", "parse", "disk_write", "publish", "reindex_wait",
+	"dispatcher_queue", "middleware", "parse", "disk_write", "publish", "reindex_wait", "edit_control", "caller_result",
 }
 
 var editPatchPhaseNames = [...]string{

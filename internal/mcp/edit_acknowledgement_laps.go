@@ -15,6 +15,7 @@ const (
 	editAckDiskWrite
 	editAckTicketAdmission
 	editAckReindexWait
+	editAckLeafControl
 	editAckLapCount
 )
 
@@ -27,12 +28,14 @@ type editAcknowledgementLapData struct {
 }
 
 type editAcknowledgementLaps struct {
-	data       [editAckLapCount]editAcknowledgementLapData
-	sequence   uint64
-	active     uint64
-	activeKind editAcknowledgementLapKind
-	lastEnd    time.Time
-	overlap    bool
+	data            [editAckLapCount]editAcknowledgementLapData
+	sequence        uint64
+	active          uint64
+	activeKind      editAcknowledgementLapKind
+	lastEnd         time.Time
+	controlStarted  time.Time
+	controlObserved bool
+	overlap         bool
 }
 
 // ObservedMS is actual completed execution, even if it outlived the caller.
@@ -45,6 +48,8 @@ type editAcknowledgementLapSnapshot struct {
 	Started       uint64
 	Completed     uint64
 	NotApplicable uint64
+	ackNS         int64 // actual scalar retained until final projection, never interval history
+	hasAckNS      bool
 }
 
 type editAcknowledgementLap struct {
@@ -82,6 +87,9 @@ func (a *editAcknowledgement) beginLapAt(kind editAcknowledgementLapKind, at tim
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	laps := &a.laps
+	if laps.active != 0 && laps.activeKind == editAckLeafControl {
+		a.closeEditControlLocked(at)
+	}
 	laps.sequence++
 	data := &laps.data[kind]
 	data.started++
@@ -134,14 +142,24 @@ func (lap *editAcknowledgementLap) finishAt(at time.Time) {
 	if data.last.IsZero() || at.After(data.last) {
 		data.last = at
 	}
-	if laps.active == lap.sequence {
+	matched := laps.active == lap.sequence
+	if matched {
 		laps.active = 0
 	} else {
 		laps.overlap = true
 		data.invalid = true
 	}
+	// A checked-but-not-applicable parse gate still performed actual guard
+	// dispatch. Its measured call belongs to leaf control, not a fake parse.
+	if matched && !lap.applicable && !data.invalid && a.leafControlOpenLocked() {
+		a.openEditControlLocked(lap.started)
+		a.closeEditControlLocked(at)
+	}
 	if at.After(laps.lastEnd) {
 		laps.lastEnd = at
+	}
+	if matched && laps.active == 0 && a.leafControlOpenLocked() {
+		a.openEditControlLocked(at)
 	}
 }
 
@@ -179,6 +197,7 @@ func (laps editAcknowledgementLaps) snapshot(kind editAcknowledgementLapKind, en
 	}
 	ackMS := ms
 	out.AckMS, out.State = &ackMS, "measured"
+	out.ackNS, out.hasAckNS = data.elapsed.Nanoseconds(), true
 	if data.notApplicable > 0 {
 		out.State = "measured_with_not_applicable_chunks"
 	}
