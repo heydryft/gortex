@@ -35,7 +35,11 @@ func TestVacuumDedicatedConnectionKeepsPoolsInMemory(t *testing.T) {
 		require.Equal(t, 2, pooledReader)
 		directory, err := vacuumTempDirectory(ctx, conn)
 		require.NoError(t, err)
-		require.Equal(t, filepath.Dir(s.Path()), directory)
+		actual, err := filepath.EvalSymlinks(directory)
+		require.NoError(t, err)
+		want, err := filepath.EvalSymlinks(filepath.Dir(s.Path()))
+		require.NoError(t, err)
+		require.Equal(t, want, actual, "SQLite may resolve a /tmp alias in its main filename")
 		requireNoCloseCheckpoint(t, conn)
 		return nil
 	}))
@@ -165,8 +169,16 @@ func TestVacuumTwoStoresKeepDistinctDirectories(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if directory != filepath.Dir(path) {
-			return fmt.Errorf("vacuum directory=%q, want own store %q", directory, filepath.Dir(path))
+		actual, err := filepath.EvalSymlinks(directory)
+		if err != nil {
+			return err
+		}
+		want, err := filepath.EvalSymlinks(filepath.Dir(path))
+		if err != nil {
+			return err
+		}
+		if actual != want {
+			return fmt.Errorf("vacuum directory=%q, want own physical store %q", actual, want)
 		}
 		_, err = conn.ExecContext(ctx, `VACUUM`)
 		return err
@@ -207,7 +219,11 @@ func TestVacuumTwoStoresKeepDistinctDirectories(t *testing.T) {
 	during, err := vacuumTempDirectory(ctx, writer)
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
-	require.Equal(t, filepath.Dir(first.Path()), during, "second store cannot redirect first store's scratch")
+	actual, err := filepath.EvalSymlinks(during)
+	require.NoError(t, err)
+	want, err := filepath.EvalSymlinks(filepath.Dir(first.Path()))
+	require.NoError(t, err)
+	require.Equal(t, want, actual, "second store cannot redirect first store's scratch")
 	unblock()
 	joinFirst()
 	joinSecond()
