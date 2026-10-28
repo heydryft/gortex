@@ -131,6 +131,11 @@ func TestMigrationWindowMCPProxyHelper(t *testing.T) {
 // separate; this fixture deliberately replays the idempotent v40 step.
 func TestMCPWaitsThroughMigrationWindow(t *testing.T) {
 	base := testenv.ShortTempDir(t)
+	// Keep this migration regression's config and actual child CWD under the
+	// same physical spelling. Alias admission is a separate unresolved case;
+	// /tmp versus /private/tmp must not conceal the migration wait contract.
+	base, err := filepath.EvalSymlinks(base)
+	require.NoError(t, err)
 	testenv.SandboxAt(t, filepath.Join(base, "home"))
 	for name, value := range migrationProxyOwnedEnv(base) {
 		t.Setenv(name, value)
@@ -152,8 +157,9 @@ func TestMCPWaitsThroughMigrationWindow(t *testing.T) {
 	require.NoError(t, os.WriteFile(cfgFile, []byte("semantic:\n  enabled: false\n"), 0o600))
 	seed, err := store_sqlite.Open(daemonBackendPath)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = seed.Close() })
-	require.NoError(t, seed.Close())
+	closeSeed := sync.OnceValue(seed.Close)
+	t.Cleanup(func() { _ = closeSeed() })
+	require.NoError(t, closeSeed())
 	db, err := sql.Open("sqlite", daemonBackendPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
