@@ -296,3 +296,37 @@ func TestDeclareRepos_WarmupEnrichmentPreservesRunningState(t *testing.T) {
 	mi.DeclareRepos(nil)
 	assert.Empty(t, mi.RepoLoads(), "removed declarations must not remain loading forever")
 }
+
+// The daemon invalidates cached scopes and publishes workspace_readiness from
+// OnRepoRegistered. A real file-save mutation must not trigger that boot event.
+func TestRepoRegistration_FileSaveDoesNotAnnounceAgain(t *testing.T) {
+	mi := newRepoLoadTestMulti(t)
+	root := filepath.Join(t.TempDir(), "saved")
+	writeRepoLoadSource(t, root)
+	mi.ExpectRepos([]config.RepoEntry{{Path: root}})
+	announced := make(chan RepoLoad, 4)
+	mi.OnRepoRegistered(func(rec RepoLoad) { announced <- rec })
+	res, err := mi.TrackRepoCtx(context.Background(), config.RepoEntry{Path: root})
+	require.NoError(t, err)
+	select {
+	case <-announced:
+	case <-time.After(time.Second):
+		t.Fatal("initial cold registration was not announced")
+	}
+	before, ok := mi.RepoLoadFor(root)
+	require.True(t, ok)
+	require.Equal(t, RepoLoadReady, before.State)
+	idx := mi.GetIndexer(res.RepoPrefix)
+	require.NotNil(t, idx)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n\nfunc SavedAfterRegistration() {}\n"), 0o644))
+	require.NoError(t, idx.IndexFile("main.go"))
+	after, ok := mi.RepoLoadFor(root)
+	require.True(t, ok)
+	assert.Equal(t, before.Since, after.Since, "a save must not create another registration epoch")
+	assert.Equal(t, before.State, after.State)
+	select {
+	case rec := <-announced:
+		t.Fatalf("file save emitted a boot readiness/scope-invalidation event: %+v", rec)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
