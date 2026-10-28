@@ -556,13 +556,13 @@ func (r *editProbeRuntime) finish() error {
 		}
 		r.phase.EditProbe.Records = append(r.phase.EditProbe.Records, record)
 		if record.Outcome != "complete" || len(record.Errors) > 0 {
-			failures = append(failures, fmt.Errorf("edit%d: %s (%s)", record.Ordinal, record.Outcome, strings.Join(record.Errors, "; ")))
+			failures = append(failures, fmt.Errorf("edit %d: %s (%s)", record.Ordinal, record.Outcome, strings.Join(record.Errors, "; ")))
 		}
 	}
 	for _, step := range r.plan.Steps[len(r.states):] {
 		record := newEditProbeRecord(r.p.Repos[0].Corpus, step)
 		r.phase.EditProbe.Records = append(r.phase.EditProbe.Records, record)
-		failures = append(failures, fmt.Errorf("edit%d: setup never completed", step.Ordinal))
+		failures = append(failures, fmt.Errorf("edit %d: setup never completed", step.Ordinal))
 	}
 	finishEditProbeMetrics(r.phase)
 	return errors.Join(failures...)

@@ -61,7 +61,7 @@ func bindRunFlags(f *flag.FlagSet, o *runOptions) {
 	f.StringVar(&o.Profile, "profile", "agent", "agent (default) or explicit saturation")
 	f.StringVar(&o.Host, "host", "native", "native, reference, or floor (validated, never provisioned)")
 	f.StringVar(&o.Scenario, "scenario", "read", "read, edit, many, many-edit, worktrees, cold, restart, sweep, edit-and-probe, all")
-	f.IntVar(&o.Agents, "agents", 4, "pure reading agents (may be 0 only for edit/many-edit)")
+	f.IntVar(&o.Agents, "agents", 4, "pure reading agents (may be 0 for edit, many-edit, or edit-and-probe)")
 	f.IntVar(&o.Editors, "edit-agents", 4, "combined editing/readback/reading agents in edit scenarios, in addition to pure readers")
 	f.IntVar(&o.Worktrees, "worktrees", 4, "linked worktrees in addition to primary")
 	f.Int64Var(&o.Seed, "seed", 1, "reproducible per-agent request/think plan seed")
