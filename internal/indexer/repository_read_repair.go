@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"strconv"
 	"time"
+	"weak"
 )
 
 const repositoryReadRepairCauseCap = 8
@@ -41,6 +42,9 @@ type repositoryReadRepairObservation struct {
 	executionSucceeded bool
 	acceptedBlobSHA    string
 	contentAmbiguous   bool
+	// Execution supplies the concrete owner; a prefix lookup at completion
+	// could instead find a replacement. Do not retain a retired Indexer.
+	owner weak.Pointer[Indexer]
 }
 
 func (o *repositoryReadRepairObservation) acceptFreshBlob(path, blobSHA string) {

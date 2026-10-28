@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"weak"
 
 	"go.uber.org/zap"
 	"golang.org/x/mod/modfile"
@@ -2975,6 +2976,9 @@ func (mi *MultiIndexer) incrementalReindexRepoRawMode(repoPrefix string, paths [
 	}
 	if idx == nil {
 		return nil, fmt.Errorf("repository mutation executor has no live indexer: %s", repoPrefix)
+	}
+	if mode.readRepair != nil {
+		mode.readRepair.owner = weak.Make(idx)
 	}
 
 	// Refresh the producer under its already-held repository lane. A watcher
