@@ -179,6 +179,7 @@ type PublicationPhaseRecord struct {
 	canonicalBound bool
 	patchLaps      *canonicalPatchEvidence    // immutable, exact accepted attempt only
 	laneWait       *canonicalLaneWaitEvidence // separate from executor-contained laps
+	debounce       *canonicalDebounceEvidence
 }
 
 type publicationMark struct {
@@ -457,6 +458,7 @@ type PublicationPhaseSnapshot struct {
 	Phases            []PublicationPhaseOffset `json:"phases"`
 	patchLaps         *canonicalPatchEvidence  // private; legacy timeline wire stays unchanged
 	laneWait          *canonicalLaneWaitEvidence
+	debounce          *canonicalDebounceEvidence
 }
 
 // Snapshot renders the record.
@@ -475,6 +477,7 @@ func (p *PublicationPhaseRecord) Snapshot() PublicationPhaseSnapshot {
 		Phases:            make([]PublicationPhaseOffset, 0, len(p.marks)),
 		patchLaps:         p.patchLaps,
 		laneWait:          p.laneWait,
+		debounce:          p.debounce,
 	}
 	for _, mark := range p.marks {
 		offset := mark.at.Sub(p.origin)
@@ -527,6 +530,7 @@ type PublicationStamps struct {
 	marks     []publicationMark
 	patchLaps *canonicalPatchLaps
 	laneWait  canonicalLaneWait
+	debounce  canonicalDebounceWait
 }
 
 type publicationStampsKey struct{}
@@ -589,6 +593,7 @@ func (p *PublicationPhaseRecord) Absorb(stamps *PublicationStamps) {
 	marks := append([]publicationMark(nil), stamps.marks...)
 	var patch *canonicalPatchEvidence
 	var lane *canonicalLaneWaitEvidence
+	var debounce *canonicalDebounceEvidence
 	if stamps.patchLaps != nil {
 		frozen := stamps.patchLaps.freeze(p.origin)
 		patch = &frozen
@@ -596,6 +601,10 @@ func (p *PublicationPhaseRecord) Absorb(stamps *PublicationStamps) {
 	if !stamps.laneWait.started.IsZero() || stamps.laneWait.invalid {
 		frozen := stamps.laneWait.freeze(p.origin)
 		lane = &frozen
+	}
+	if !stamps.debounce.started.IsZero() {
+		frozen := stamps.debounce.freeze(p.origin)
+		debounce = &frozen
 	}
 	stamps.mu.Unlock()
 	p.mu.Lock()
@@ -608,5 +617,6 @@ func (p *PublicationPhaseRecord) Absorb(stamps *PublicationStamps) {
 	if !p.terminal && p.canonicalBound && p.patchLaps == nil {
 		p.patchLaps = patch
 		p.laneWait = lane
+		p.debounce = debounce
 	}
 }

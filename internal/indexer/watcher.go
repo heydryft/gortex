@@ -1969,21 +1969,35 @@ func (w *Watcher) scheduleFileMutationWithRecord(path string, kind ChangeKind, r
 
 func (w *Watcher) armPointMutationTimerLocked(path string, kind ChangeKind, generation uint64, retryAttempt int, delay time.Duration) {
 	var timer *time.Timer
+	var debounce *canonicalDebounceWait
+	if retryAttempt == 0 && w.mutationWaiters[path][generation].publication != nil {
+		debounce = &canonicalDebounceWait{started: time.Now()}
+	}
 	w.asyncWork.Add(1)
 	timer = time.AfterFunc(delay, func() {
+		if debounce != nil {
+			debounce.entered = time.Now() // callback entry excludes claim-lock/admission work
+		}
 		defer w.asyncWork.Done()
 		// Timer.Stop can lose a race with a callback that is already queued.
 		// Only the newest timer may consume the pending entry.
 		if !w.claimPendingTimer(path, &timer) {
 			return
 		}
-		w.runPointMutation(path, kind, generation, retryAttempt)
+		w.runPointMutationWithDebounce(path, kind, generation, retryAttempt, debounce)
 	})
 	w.pending[path] = timer
 }
 
 func (w *Watcher) runPointMutation(path string, kind ChangeKind, generation uint64, retryAttempt int) {
+	w.runPointMutationWithDebounce(path, kind, generation, retryAttempt, nil)
+}
+
+func (w *Watcher) runPointMutationWithDebounce(path string, kind ChangeKind, generation uint64, retryAttempt int, debounce *canonicalDebounceWait) {
 	publication := w.beginPointPublication(path, generation)
+	if publication != nil && debounce != nil {
+		publication.stamps.debounce = *debounce // immutable callback-owned pair, exact generation only
+	}
 	if w.pointMutationClaimed != nil {
 		w.pointMutationClaimed(path)
 	}

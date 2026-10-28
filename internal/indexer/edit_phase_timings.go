@@ -73,6 +73,9 @@ func (s PublicationPhaseSnapshot) EditTimings() EditPhaseTimings {
 	if s.patchLaps != nil {
 		s.patchLaps.project(offsets, s.Terminal, &out)
 	}
+	if s.debounce != nil {
+		s.debounce.project(offsets, s.Terminal, &out)
+	}
 	if s.laneWait != nil {
 		s.laneWait.project(offsets, s.Terminal, &out)
 	}
@@ -91,7 +94,7 @@ func (s PublicationPhaseSnapshot) EditTimings() EditPhaseTimings {
 	// Only subtract disjoint, wholly contained measured intervals. An invalid
 	// order leaves the residual unknown; never clamp it to a plausible zero.
 	var measured float64
-	for _, name := range []string{"disk_write", "publish", "lane_wait", "gate_wait", "patch_parse", "apply", "search_lap", "resolve", "mtimes", "derived"} {
+	for _, name := range []string{"disk_write", "publish", "debounce", "lane_wait", "gate_wait", "patch_parse", "apply", "search_lap", "resolve", "mtimes", "derived"} {
 		if out.States[name] == "invalid_order" || out.States[name] == "pending" {
 			return out
 		}

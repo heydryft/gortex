@@ -68,8 +68,17 @@ accepted runnable attempt, which may follow retries. These are outer execution
 events, not a pure debounce/lane/gate measurement, a full patch wall, or a split
 of nested deep phases. No deep checkout-builder phase is relabelled onto the
 contextless canonical pipeline, and internal storm/atomic batches remain outside
-this observation. Debounce and the full patch wall remain unobserved;
+this observation. The full patch wall remains unobserved;
 no phase-sum or CPU attribution acceptance follows from these events.
+
+For an accepted initial canonical point attempt, `debounce` measures the actual
+initial timer arm through callback entry. It excludes the callback's claim lock,
+cohort admission and repository lane. Only the exact claimed generation's
+successful winner publishes the immutable pair; older coalesced receipts do not
+borrow it. A retry's timer is backoff, so a winning retry leaves `debounce`
+null/`not_observed` rather than borrowing its failed initial attempt's interval.
+The existing physical-attempt log carries the same optional quiet-wait evidence
+under its attempt ticket, before final receipt validation.
 
 For an accepted canonical point attempt, `lane_wait` uses the actual repository
 lane channel wait and grant, after batch admission and its hook. The pair is

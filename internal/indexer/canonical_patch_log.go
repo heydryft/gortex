@@ -12,6 +12,8 @@ type canonicalPatchLog struct {
 	counts        [canonicalPatchLapCount]uint64
 	laneWaitMS    *float64
 	laneWaitState string
+	debounceMS    *float64
+	debounceState string
 }
 
 func (s *PublicationStamps) snapshotPatchLog() (canonicalPatchLog, bool) {
@@ -22,6 +24,7 @@ func (s *PublicationStamps) snapshotPatchLog() (canonicalPatchLog, bool) {
 	origin := s.patchLaps.origin
 	evidence := s.patchLaps.freeze(origin)
 	lane := s.laneWait.freeze(origin)
+	debounce := s.debounce
 	ticket := s.patchLaps.ticket
 	offsets := make(map[PublicationPhase]int64, len(s.marks)+1)
 	if !s.patchLaps.enqueued.IsZero() {
@@ -36,7 +39,11 @@ func (s *PublicationStamps) snapshotPatchLog() (canonicalPatchLog, bool) {
 	projection := EditPhaseTimings{Milliseconds: make(map[string]*float64, canonicalPatchLapCount), States: make(map[string]string, canonicalPatchLapCount)}
 	evidence.project(offsets, false, &projection)
 	lane.project(offsets, false, &projection)
-	out := canonicalPatchLog{ticket: ticket, laneWaitMS: projection.Milliseconds["lane_wait"], laneWaitState: projection.States["lane_wait"]}
+	projection.States["debounce"] = "not_observed"
+	if !debounce.started.IsZero() {
+		debounce.freeze(origin).project(offsets, false, &projection)
+	}
+	out := canonicalPatchLog{ticket: ticket, laneWaitMS: projection.Milliseconds["lane_wait"], laneWaitState: projection.States["lane_wait"], debounceMS: projection.Milliseconds["debounce"], debounceState: projection.States["debounce"]}
 	for i, name := range canonicalPatchLapNames {
 		out.states[i], out.counts[i] = projection.States[name], evidence.laps[i].done
 		if ms := projection.Milliseconds[name]; ms != nil {
@@ -49,6 +56,10 @@ func (s *PublicationStamps) snapshotPatchLog() (canonicalPatchLog, bool) {
 func (p canonicalPatchLog) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 	enc.AddString("patch_lap_scope", "physical_attempt_before_receipt_validation")
 	enc.AddUint64("attempt_ticket", p.ticket)
+	enc.AddString("attempt_debounce_state", p.debounceState)
+	if p.debounceMS != nil {
+		enc.AddFloat64("attempt_debounce_ms", *p.debounceMS)
+	}
 	enc.AddString("attempt_lane_wait_state", p.laneWaitState)
 	if p.laneWaitMS != nil {
 		enc.AddFloat64("attempt_lane_wait_ms", *p.laneWaitMS)
