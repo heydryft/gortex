@@ -133,20 +133,27 @@ func TestCanonicalPublicationCommitsOnlyGuardedWinningAttempt(t *testing.T) {
 			requirePointExecution(t, older, false)
 			bumpMtime(t, path, "package p\n\nfunc Newer() {}\n")
 			newer := newPointPublication(t, "newer")
-			ctx := t.Context()
-			if !nativeSuccessor {
-				ctx = WithPublicationRecord(ctx, newer)
+			var second *MutationTicket
+			if nativeSuccessor {
+				// The normal fsnotify path has no request context. A native
+				// successor must resolve the older ticket without borrowing its
+				// record for the newer physical work.
+				second = w.scheduleFileMutation(path, ChangeModified)
+				require.NotNil(t, second)
+			} else {
+				second, err = w.EnqueueFileMutation(WithPublicationRecord(t.Context(), newer), path)
+				require.NoError(t, err)
 			}
-			second, err := w.EnqueueFileMutation(ctx, path)
-			require.NoError(t, err)
 			if releaseOnce.CompareAndSwap(false, true) {
 				close(release)
 			}
 			for _, ticket := range []*MutationTicket{first, second} {
 				result := awaitMutationRetryResult(t, ticket)
 				require.NoError(t, result.Err)
+				require.Equal(t, ticket.Generation, result.RequestedGeneration)
 				require.Equal(t, second.Generation, result.AppliedGeneration)
 			}
+			require.Greater(t, second.Generation, first.Generation)
 			requirePointExecution(t, older, false)
 			requirePointExecution(t, newer, !nativeSuccessor)
 			require.Equal(t, first.Generation, older.Snapshot().Ticket)
