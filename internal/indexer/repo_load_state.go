@@ -617,12 +617,20 @@ func (snap *repoLoadSnapshot) matchForPath(path string, includeReady bool) (Repo
 	if commonDir == "" {
 		return RepoLoad{}, false
 	}
+	var ready RepoLoad
+	hasReady := false
 	for _, rec := range snap.records {
-		if (rec.State.Loading() || (includeReady && rec.State.Ready())) && rec.commonDir != "" && pathkey.EqualPaths(rec.commonDir, commonDir) {
+		if rec.commonDir == "" || !pathkey.EqualPaths(rec.commonDir, commonDir) {
+			continue
+		}
+		if rec.State.Loading() {
 			return rec, true
 		}
+		if includeReady && rec.State.Ready() && !hasReady {
+			ready, hasReady = rec, true
+		}
 	}
-	return RepoLoad{}, false
+	return ready, hasReady
 }
 
 // enclosing finds the nearest recorded root at or above path.

@@ -51,4 +51,16 @@ func TestRepoLoadAdmissionRetainsReadyLinkedFamilyIdentity(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(nested, ".git"), 0755))
 	_, classified = mi.RepoLoadAdmissionForPath(nested)
 	require.False(t, classified, "a different nearest git identity cannot inherit ready family evidence")
+	// A specific pending family match keeps its existing priority; adding ready
+	// identity evidence must not displace it merely because ready was recorded first.
+	loading := t.TempDir()
+	admin := filepath.Join(root, ".git", "worktrees", "another")
+	require.NoError(t, os.MkdirAll(admin, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(admin, "commondir"), []byte("../.."), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(loading, ".git"), []byte("gitdir: "+admin), 0644))
+	mi.ExpectRepos([]config.RepoEntry{{Path: root}, {Path: loading, Name: "pending-family"}})
+	rec, classified = mi.RepoLoadAdmissionForPath(linked)
+	require.True(t, classified)
+	require.Equal(t, RepoLoadQueued, rec.State)
+	require.Equal(t, loading, rec.Root)
 }
