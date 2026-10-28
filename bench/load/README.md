@@ -104,6 +104,22 @@ deep laps ends that edit as failed coverage once its graph and read evidence
 have arrived. Receipt terminality alone still waits for late physical evidence;
 a complete physical partition also continues waiting for late background data.
 
+`mutation_status` can separately expose `read_assisted_publication` when an
+already-needed read repair executes for the exact pending committed bytes.
+Its monotonic window covers the actual coordinator execution, with that
+drain's owner generation and bounded reader admission causes. A reused wire ID
+is not a unique publisher identity. This window can overlap the original
+receipt's quiet wait; it is not added to A, B or a later no-op watcher P.
+The relationship to complete requested-background accounting remains
+unavailable. Missing, failed, broad, evicted, rebound or content-mismatched
+observations do not supply that evidence. This initial repair observation
+does not provide deep phase coverage or satisfy the accounting acceptance gate.
+R is retained only by the existing bounded mutation ledger. Evicting the
+original publication recorder's index entry does not erase an accepted ledger
+observation or make canonical P/B available; ledger eviction clears R, and a
+freshness rebind refuses the old relation. Earlier returned snapshots remain
+immutable.
+
 Edit scenarios require at least one editor; zero total or negative counts are
 rejected. Zero pure readers are allowed only for `edit`/`many-edit`; `all` needs
 both populations, and other scenarios need at least one reader. Inactive editor

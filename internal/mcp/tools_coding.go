@@ -366,7 +366,7 @@ func (s *Server) handleGetEditingContext(ctx context.Context, req mcp.CallToolRe
 	fp = s.graphRelPath(ctx, fp)
 
 	// Auto re-index stale file before querying.
-	s.ensureFresh([]string{fp})
+	s.ensureFreshContext(ctx, []string{fp})
 
 	s.sessionFor(ctx).recordFile(fp)
 	// Tool-call observer: credit the recent search for the symbols in
@@ -949,7 +949,7 @@ func (s *Server) handleGetSymbolSource(ctx context.Context, req mcp.CallToolRequ
 
 	// Auto re-index stale file before querying.
 	if parts := strings.SplitN(id, "::", 2); len(parts) == 2 {
-		s.ensureFresh([]string{parts[0]})
+		s.ensureFreshContext(ctx, []string{parts[0]})
 	}
 
 	node := s.engineFor(ctx).GetSymbol(id)

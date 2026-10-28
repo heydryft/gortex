@@ -204,6 +204,9 @@ func (s *Server) mutationStatusPayload(record *mutationCommitRecord) map[string]
 		"graph_status": snap.GraphStatus,
 	}
 	attachMutationRefreshSnapshot(payload, snap)
+	if snap.readRepair != nil {
+		payload["read_assisted_publication"] = snap.readRepair.payload()
+	}
 	if snap.MutationID != "" {
 		payload["mutation_id"] = snap.MutationID
 	}

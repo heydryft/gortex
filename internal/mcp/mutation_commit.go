@@ -153,6 +153,7 @@ type mutationCommitRecord struct {
 	// only while this record belongs to the bounded ledger. Pending-source
 	// evidence can outlive that ownership, so eviction must clear this too.
 	acknowledgement *editAcknowledgement
+	readRepair      *mutationReadRepairObservation
 	// Only batchAcknowledgementCommit uses this fixed-size identity. It has
 	// no disk/graph outcome and cannot enter any physical mutation index.
 	batchOwner [32]byte
@@ -187,6 +188,7 @@ type mutationCommitSnapshot struct {
 	AppliedGeneration   uint64 `json:"applied_generation,omitempty"`
 	CheckoutID          string `json:"checkout_id,omitempty"`
 	CheckoutIncarnation string `json:"checkout_incarnation,omitempty"`
+	readRepair          *mutationReadRepairObservation
 }
 
 func (r *mutationCommitRecord) snapshot() mutationCommitSnapshot {
@@ -213,6 +215,10 @@ func (r *mutationCommitRecord) snapshot() mutationCommitSnapshot {
 		AppliedGeneration:   r.appliedGeneration,
 		CheckoutID:          r.checkoutID,
 		CheckoutIncarnation: r.checkoutIncarnation,
+	}
+	if r.readRepair != nil {
+		observation := *r.readRepair
+		snap.readRepair = &observation
 	}
 	if !r.startedAt.IsZero() {
 		snap.StartedAt = r.startedAt.UTC().Format(time.RFC3339Nano)
@@ -330,6 +336,10 @@ func (r *mutationCommitRecord) recordGraphForReceipt(expectedReceipt string, out
 	r.graphReason = ""
 	if r.reindexReceipt != outcome.Receipt {
 		r.pendingSourceRecovered = false
+	}
+	if r.reindexReceipt != outcome.Receipt || r.reindexGeneration != outcome.Generation ||
+		(outcome.checkoutID != "" && (r.checkoutID != outcome.checkoutID || r.checkoutIncarnation != outcome.checkoutIncarnation)) {
+		r.readRepair = nil
 	}
 	if ledger != nil {
 		ledger.unbindFreshnessLocked(r)
@@ -496,6 +506,7 @@ func (l *mutationCommitLedger) evictLocked(now time.Time) {
 			record.mu.Lock()
 			record.publication = nil
 			record.acknowledgement = nil
+			record.readRepair = nil
 			record.mu.Unlock()
 			delete(l.byID, record.id)
 			if record.key != "" && l.byKey[record.key] == record {
@@ -513,6 +524,7 @@ func (l *mutationCommitLedger) evictLocked(now time.Time) {
 		l.unbindFreshnessLocked(oldest)
 		oldest.publication = nil
 		oldest.acknowledgement = nil
+		oldest.readRepair = nil
 		oldest.mu.Unlock()
 		delete(l.byID, oldest.id)
 		if oldest.key != "" && l.byKey[oldest.key] == oldest {
