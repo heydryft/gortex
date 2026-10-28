@@ -7016,6 +7016,7 @@ type incrementalPathMode struct {
 	// Existing batch/reconcile/direct callers leave it nil. No live receipt or
 	// mutable Indexer tracing state is installed by this per-call observation.
 	publication *PublicationStamps
+	readRepair  *repositoryReadRepairObservation
 }
 
 // indexedFilesAbsentFromDisk returns the repo-relative keys of files the graph

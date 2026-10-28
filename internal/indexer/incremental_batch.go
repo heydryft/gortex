@@ -32,6 +32,7 @@ type incrementalBatchStage struct {
 	mtimeKey               string
 	readVersion            fileReadVersion
 	rawSHA256              string
+	readRepairBlobSHA      string
 	relPath                string
 	graphPath              string
 	legacyIDs              []string
@@ -68,7 +69,8 @@ type fileReadReceipt struct {
 	readVersion fileReadVersion
 	// rawSHA256 is the content identity of the bytes read, set only for a
 	// build that proves its reads (Indexer.contentProof).
-	rawSHA256 string
+	rawSHA256         string
+	readRepairBlobSHA string
 }
 
 type incrementalFallback struct {
@@ -319,7 +321,11 @@ func (idx *Indexer) reindexIncrementalChunk(
 		// the partial chunk and retries this file in the next chunk; this
 		// prevents repositories from each holding a partial batch while all
 		// wait for capacity owned by the others.
-		probe, probeOK, admissionBusy := idx.prepareFileDeltaWithAdmission(filePath, len(stages) > 0)
+		var repair *repositoryReadRepairObservation
+		if markerBatch != nil {
+			repair = markerBatch.readRepair
+		}
+		probe, probeOK, admissionBusy := idx.prepareFileDeltaWithAdmissionObserved(filePath, len(stages) > 0, repair)
 		if admissionBusy {
 			break
 		}
@@ -362,7 +368,8 @@ func (idx *Indexer) reindexIncrementalChunk(
 			idx.discardPreparedExtraction(filePath)
 			receipts = append(receipts, fileReadReceipt{
 				absPath: filePath, mtimeKey: idx.relKey(filePath), readVersion: probe.readVersion,
-				rawSHA256: probe.rawSHA256,
+				rawSHA256:         probe.rawSHA256,
+				readRepairBlobSHA: probe.readRepairBlobSHA,
 			})
 			plan.InertFiles++
 			continue
@@ -401,9 +408,10 @@ func (idx *Indexer) reindexIncrementalChunk(
 		idx.applyRepoPrefix(prepared.result.Nodes, prepared.result.Edges)
 		stage := &incrementalBatchStage{
 			absPath: filePath, mtimeKey: idx.relKey(filePath),
-			readVersion: prepared.readVersion,
-			rawSHA256:   prepared.rawSHA256,
-			relPath:     prepared.relPath, graphPath: graphPath,
+			readVersion:       prepared.readVersion,
+			rawSHA256:         prepared.rawSHA256,
+			readRepairBlobSHA: prepared.readRepairBlobSHA,
+			relPath:           prepared.relPath, graphPath: graphPath,
 			legacyIDs: legacyIDs, legacyPath: legacyPath,
 			src: prepared.src, result: prepared.result, prepared: prepared, priorNodes: priorNodes,
 			storedGraph: storedGraph, storedDerived: storedDerived, probe: probe,
@@ -444,7 +452,8 @@ func (idx *Indexer) reindexIncrementalChunk(
 		for _, stage := range stages {
 			receipts = append(receipts, fileReadReceipt{
 				absPath: stage.absPath, mtimeKey: stage.mtimeKey, readVersion: stage.readVersion,
-				rawSHA256: stage.rawSHA256,
+				rawSHA256:         stage.rawSHA256,
+				readRepairBlobSHA: stage.readRepairBlobSHA,
 			})
 		}
 		// Commit no longer reads the staged source, result, or tree. Return
@@ -464,6 +473,13 @@ func (idx *Indexer) reindexIncrementalChunk(
 	freshSet := make(map[string]struct{}, len(freshPaths))
 	for _, filePath := range freshPaths {
 		freshSet[filePath] = struct{}{}
+	}
+	if markerBatch != nil && markerBatch.readRepair != nil {
+		for _, receipt := range receipts {
+			if _, fresh := freshSet[receipt.absPath]; fresh && receipt.readRepairBlobSHA != "" {
+				markerBatch.readRepair.acceptFreshBlob(idx.relKey(receipt.absPath), receipt.readRepairBlobSHA)
+			}
+		}
 	}
 
 	var reparsed []string

@@ -109,6 +109,7 @@ type repositoryMutationCoordinator struct {
 	// coordinators leave it nil; tests set it before admitting concurrent work.
 	batchAdmissionHook func()
 	executor           repositoryMutationExecutor
+	readRepairExecutor func([]string, *repositoryReadRepairObservation) (*IndexResult, error)
 	// outputGeneration wraps ONE executed coalesced batch in an
 	// output-generation receipt. The coalescing lane, not the queuing caller,
 	// is the mutation entry point here: many callers merge into one execution,
@@ -223,6 +224,7 @@ func (c *repositoryMutationCoordinator) drain() {
 		readRepairPending := c.readRepairPending
 		c.readRepairPending = false
 		executor := c.executor
+		readRepairExecutor := c.readRepairExecutor
 		outputGeneration := c.outputGeneration
 		authorityRequired := c.authorityRequired
 		c.mu.Unlock()
@@ -232,6 +234,11 @@ func (c *repositoryMutationCoordinator) drain() {
 			observation = newRepositoryReadRepairObservation(generation, paths, waiters)
 		}
 		if observation != nil {
+			if readRepairExecutor != nil {
+				executor = func(paths []string) (*IndexResult, error) {
+					return readRepairExecutor(paths, observation)
+				}
+			}
 			observation.started = time.Now()
 		}
 		outcome := executeRepositoryMutationUnderAuthority(
@@ -242,6 +249,9 @@ func (c *repositoryMutationCoordinator) drain() {
 			observation.executionSucceeded = outcome.err == nil && result != nil &&
 				!result.FullRetrack && len(result.FailedFiles) == 0 && len(result.Errors) == 0 &&
 				result.DeletedFileCount == 0 && result.QuarantinedFiles == 0 && result.SkippedFiles == 0
+			if !observation.executionSucceeded {
+				observation.acceptedBlobSHA = ""
+			}
 		}
 		c.lane <- struct{}{}
 		if batchMutationGate != nil {
@@ -502,6 +512,11 @@ func (mi *MultiIndexer) repositoryMutationCoordinator(repoPrefix string) *reposi
 		coordinator = newRepositoryMutationCoordinator(func(paths []string) (*IndexResult, error) {
 			return mi.incrementalReindexRepoRaw(repoPrefix, paths)
 		})
+		coordinator.readRepairExecutor = func(paths []string, observation *repositoryReadRepairObservation) (*IndexResult, error) {
+			return mi.incrementalReindexRepoRawMode(repoPrefix, paths, incrementalPathMode{
+				detectDeletions: true, readRepair: observation,
+			})
+		}
 		// Attach before publishing the slot: every execution through this stable
 		// lane must participate in the owning MultiIndexer's batch transition.
 		coordinator.batchMutationGate = &mi.batchMutationGate

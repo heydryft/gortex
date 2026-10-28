@@ -1,6 +1,11 @@
 package indexer
 
-import "time"
+import (
+	"crypto/sha1" // Git blob identity, not a security decision.
+	"encoding/hex"
+	"strconv"
+	"time"
+)
 
 const repositoryReadRepairCauseCap = 8
 
@@ -34,6 +39,30 @@ type repositoryReadRepairObservation struct {
 	// Execution success alone is not content-publication proof. A later
 	// accepted-read receipt must still match the pending commit's exact bytes.
 	executionSucceeded bool
+	acceptedBlobSHA    string
+	contentAmbiguous   bool
+}
+
+func (o *repositoryReadRepairObservation) acceptFreshBlob(path, blobSHA string) {
+	if o == nil || o.contentAmbiguous || path != o.path || blobSHA == "" {
+		return
+	}
+	if o.acceptedBlobSHA != "" && o.acceptedBlobSHA != blobSHA {
+		o.acceptedBlobSHA = ""
+		o.contentAmbiguous = true
+		return
+	}
+	o.acceptedBlobSHA = blobSHA
+}
+
+// Derive the ledger's Git blob identity from the exact untransformed buffer
+// already read by extraction. This must not reopen the source or substitute
+// the distinct SHA-256 content-proof identity used by immutable builds.
+func readRepairBlobSHA(src []byte) string {
+	h := sha1.New()
+	_, _ = h.Write([]byte("blob " + strconv.Itoa(len(src)) + "\x00"))
+	_, _ = h.Write(src)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // newRepositoryReadRepairObservation does not read a clock or allocate on the

@@ -6,6 +6,34 @@ import (
 	"testing"
 )
 
+func TestRepositoryReadRepairUsesGitBlobIdentity(t *testing.T) {
+	for _, test := range []struct{ content, oid string }{
+		{"", "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"},
+		{"hello\n", "ce013625030ba8dba906f756967f9e9ca394464a"},
+	} {
+		if got := readRepairBlobSHA([]byte(test.content)); got != test.oid {
+			t.Fatalf("Git blob identity = %q, want %q", got, test.oid)
+		}
+	}
+}
+
+func TestRepositoryReadRepairAcceptedContentCannotChangeOwners(t *testing.T) {
+	observation := &repositoryReadRepairObservation{path: "target.go"}
+	older := readRepairBlobSHA([]byte("old bytes"))
+	newer := readRepairBlobSHA([]byte("new bytes"))
+	observation.acceptFreshBlob("other.go", older)
+	if observation.acceptedBlobSHA != "" {
+		t.Fatal("another path supplied target content")
+	}
+	observation.acceptFreshBlob("target.go", older)
+	immutable := *observation
+	observation.acceptFreshBlob("target.go", newer)
+	observation.acceptFreshBlob("target.go", older)
+	if observation.acceptedBlobSHA != "" || !observation.contentAmbiguous || immutable.acceptedBlobSHA != older {
+		t.Fatal("ambiguous content regained authority or changed an earlier snapshot")
+	}
+}
+
 func TestRepositoryReadRepairCausesKeepReusedWireIDsDistinct(t *testing.T) {
 	request := &repositoryReadRepairRequest{session: "session", requestIDKey: "n:7", complete: func(repositoryReadRepairObservation) {}}
 	waiters := []*repositoryMutationWaiter{
