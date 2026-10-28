@@ -44,8 +44,14 @@ func TestReconcileUnloadedRepos_Warmup(t *testing.T) {
 			loaded: []daemon.TrackedRepoStatus{{Prefix: "worktree-instance", Path: path}},
 		},
 		{
-			name:   "already loaded by prefix",
+			name:   "another root with the same prefix remains visible",
 			loaded: []daemon.TrackedRepoStatus{{Prefix: "repo", Path: filepath.Join(path, "worktree")}},
+			want: []daemon.TrackedRepoStatus{{Prefix: "repo", Path: path, Name: "repo",
+				Workspace: "repo", WorkspaceProject: "repo", Unloaded: true, Loading: true}},
+		},
+		{
+			name:   "legacy pathless status can match by prefix",
+			loaded: []daemon.TrackedRepoStatus{{Prefix: "repo"}},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
