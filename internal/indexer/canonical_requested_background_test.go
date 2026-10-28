@@ -243,7 +243,11 @@ func TestCanonicalSchedulingEntryKeepsOuterIdentityAndNativeAbstention(t *testin
 func TestRequestedBackgroundRejectsSupersessionBeforeAcceptance(t *testing.T) {
 	path, _, w := pointPublicationFixture(t)
 	w.config.DebounceMs = int(time.Hour / time.Millisecond)
-	record := newPointPublication(t, "background-before-acceptance")
+	// Retain the original plus both independent physical attempts; otherwise
+	// this exercises bounded eviction before it can inspect supersession.
+	recorder := NewPublicationPhaseRecorder(4, 1)
+	t.Cleanup(func() { runtime.KeepAlive(recorder) })
+	record := recorder.Begin("", "background-before-acceptance", PublicationSourceMCPEdit, time.Now())
 	first := w.scheduleFileMutationWithRecord(path, ChangeModified, record)
 	native := w.scheduleFileMutation(path, ChangeModified)
 	reached, release := make(chan struct{}), make(chan struct{})
