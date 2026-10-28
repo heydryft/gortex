@@ -55,6 +55,15 @@ func TestReconcileUnloadedRepos_Warmup(t *testing.T) {
 	}
 }
 
+func TestReconcileUnloadedReposKeepsACollidingRootVisible(t *testing.T) {
+	owner, loser := filepath.Join(t.TempDir(), "src"), filepath.Join(t.TempDir(), "src")
+	rows := reconcileUnloadedRepos([]config.RepoEntry{{Path: loser}}, map[string]bool{loser: false},
+		[]daemon.TrackedRepoStatus{{Path: owner, Prefix: "src"}}, true)
+	require.Len(t, rows, 1)
+	require.Equal(t, loser, rows[0].Path)
+	require.True(t, rows[0].Unloaded)
+}
+
 func TestControllerStatus_LoadingFollowsReadiness(t *testing.T) {
 	path := t.TempDir()
 	c := probeController(t, "repos:\n  - path: "+path+"\n    name: repo\n")

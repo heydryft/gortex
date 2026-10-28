@@ -915,6 +915,10 @@ func (c *realController) Probe(ctx context.Context) (daemon.ProbeResponse, error
 		if rec, ok := c.multiIndexer.RepoLoadFor(path); ok {
 			repo.State = publicRepoState(rec.State)
 			repo.StateReason = rec.Reason
+			if rec.ErrorCode == daemon.ErrPrefixCollision {
+				repo.State = daemon.RepoStatePrefixCollision
+				repo.ErrorCode, repo.OwnerPath, repo.OwnerState = rec.ErrorCode, rec.OwnerPath, rec.OwnerState
+			}
 		}
 		resp.TrackedRepos = append(resp.TrackedRepos, repo)
 	}
@@ -1112,6 +1116,12 @@ func (c *realController) status(ctx context.Context, waitForAggregate bool) (dae
 	// subsequent busy pass.
 	tracked := append([]daemon.TrackedRepoStatus(nil), agg.tracked...)
 	tracked = append(tracked, reconcileUnloadedRepos(configRepos, repoMissing, agg.tracked, ready)...)
+	for i := range tracked {
+		if rec, ok := c.multiIndexer.RepoLoadFor(tracked[i].Path); ok && rec.ErrorCode == daemon.ErrPrefixCollision {
+			tracked[i].Unloaded, tracked[i].Loading = true, false
+			tracked[i].ErrorCode, tracked[i].OwnerPath, tracked[i].OwnerState = rec.ErrorCode, rec.OwnerPath, rec.OwnerState
+		}
+	}
 
 	// mem was sampled before the mutex was taken — see the note at the top
 	// of status.
@@ -1579,9 +1589,8 @@ func lookupRepoMissing(missing map[string]bool, root string) bool {
 
 // reconcileUnloadedRepos returns a synthetic row for every configured
 // repo the daemon holds no index for. Matching is by path first (what
-// track resolves and persists) and by resolved prefix second, so a repo
-// registered under a derived worktree-instance prefix still matches its
-// config entry.
+// track resolves and persists). Prefix-only matching is reserved for entries
+// without a path: another root under the same prefix is not a loaded entry.
 func reconcileUnloadedRepos(entries []config.RepoEntry, missing map[string]bool, loaded []daemon.TrackedRepoStatus, ready bool) []daemon.TrackedRepoStatus {
 	if len(entries) == 0 {
 		return nil
@@ -1591,7 +1600,7 @@ func reconcileUnloadedRepos(entries []config.RepoEntry, missing map[string]bool,
 		prefix := config.ResolvePrefix(e)
 		isLoaded := false
 		for _, r := range loaded {
-			if (e.Path != "" && pathkey.EqualPaths(r.Path, e.Path)) || (prefix != "" && r.Prefix == prefix) {
+			if e.Path != "" && pathkey.EqualPaths(r.Path, e.Path) || e.Path == "" && prefix != "" && r.Prefix == prefix {
 				isLoaded = true
 				break
 			}

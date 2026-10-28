@@ -1738,6 +1738,9 @@ func (s *Server) stateAwareInstructionsWithCheckout(ctx context.Context, cwd, ba
 }
 
 func (s *Server) instructionsForRepoLoad(cwd, base string, rec indexer.RepoLoad) string {
+	if rec.ErrorCode == string(ErrCodePrefixCollision) {
+		return ServerInstructionsPrefixCollision(rec)
+	}
 	if rec.State == indexer.RepoLoadIdentityPending {
 		return ServerInstructionsIdentityPending() + "\n\n" + base
 	}

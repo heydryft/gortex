@@ -107,3 +107,21 @@ func TestTrackOutcomeExpiryNeverEvictsARunningProducer(t *testing.T) {
 	_, found = s.trackInFlight.Load(key)
 	require.False(t, found)
 }
+
+func TestMCPConfiguredCollisionPrecedesAlreadyConfigured(t *testing.T) {
+	s, mi := newWorktreeMCPServer(t)
+	owner, loser := filepath.Join(t.TempDir(), "src"), filepath.Join(t.TempDir(), "src")
+	for _, root := range []string{owner, loser} {
+		require.NoError(t, os.MkdirAll(root, 0o755))
+	}
+	_, err := mi.TrackRepoCtx(t.Context(), config.RepoEntry{Path: owner})
+	require.NoError(t, err)
+	mi.ExpectRepos([]config.RepoEntry{{Path: owner}, {Path: loser}})
+	req := mcplib.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"path": loser}
+	result, err := s.handleTrackRepository(t.Context(), req)
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+	require.Equal(t, "prefix_collision", result.StructuredContent.(map[string]any)["error_code"])
+	require.NotContains(t, extractTextFromContent(t, result.Content), "already_configured")
+}

@@ -91,6 +91,18 @@ func (s *Server) trackRepositoryAccepted(ctx context.Context, req mcp.CallToolRe
 
 func (s *Server) trackRepositoryOutcome(ctx context.Context, req mcp.CallToolRequest, path string, entry config.RepoEntry, out repositoryTrackOutcome, cached bool) (*mcp.CallToolResult, error) {
 	if out.err != nil {
+		if errors.Is(out.err, indexer.ErrRepoIdentityPending) {
+			payload := map[string]any{
+				"error_code": string(ErrCodeRepoLoading), "retryable": true,
+				"reason": "identity_pending", "phase": "identity_resolution", "percent": 0,
+				"path": path, "suggestion": ServerInstructionsIdentityPending(),
+			}
+			result, err := s.respondJSONOrTOON(ctx, req, payload)
+			if result != nil {
+				result.IsError, result.StructuredContent = true, payload
+			}
+			return result, err
+		}
 		var collision *indexer.PrefixCollisionError
 		if !errors.As(out.err, &collision) {
 			return mcp.NewToolResultError(out.err.Error()), nil
