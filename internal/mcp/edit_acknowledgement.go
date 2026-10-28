@@ -62,6 +62,8 @@ type editAcknowledgementSnapshot struct {
 	DispatcherQueueState string
 	DispatcherPreambleMS *float64
 	DispatcherState      string
+	DispatcherReplyMS    *float64
+	DispatcherReplyState string
 	ParseGate            editAcknowledgementLapSnapshot
 	DiskWrite            editAcknowledgementLapSnapshot
 	TicketAdmission      editAcknowledgementLapSnapshot
@@ -136,6 +138,7 @@ func (a *editAcknowledgement) snapshot() editAcknowledgementSnapshot {
 		RPCID: a.id, Scope: "mcp_bound_call", ReplyOutcome: outcome,
 		DispatcherQueueState: "unavailable_dispatcher_interface",
 		DispatcherState:      "unavailable_dispatcher_interface",
+		DispatcherReplyState: "unavailable_dispatcher_interface",
 	}
 	result.ReplyWallMS, result.ReplyState = editAcknowledgementWall(a.entered, reply)
 	result.ActualWallMS, result.ActualState = editAcknowledgementWall(a.entered, actual)
@@ -152,9 +155,11 @@ func (a *editAcknowledgement) snapshot() editAcknowledgementSnapshot {
 	if a.hasDispatch {
 		if a.dispatch.Granted.Before(a.dispatch.Entered) || a.entered.Before(a.dispatch.Granted) {
 			result.DispatcherQueueState, result.DispatcherState = "invalid_interval", "invalid_interval"
+			result.DispatcherReplyState = "invalid_interval"
 		} else {
 			result.DispatcherQueueMS, result.DispatcherQueueState = editAcknowledgementWall(a.dispatch.Entered, a.dispatch.Granted)
 			result.DispatcherPreambleMS, result.DispatcherState = editAcknowledgementWall(a.dispatch.Granted, a.entered)
+			result.DispatcherReplyMS, result.DispatcherReplyState = editAcknowledgementWall(a.dispatch.Entered, reply)
 		}
 	}
 	result.Middleware, result.ReplyPrepare = envelope.snapshot(a.entered, reply, actual)

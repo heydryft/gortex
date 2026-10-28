@@ -256,7 +256,7 @@ that overhead is unmeasured, with a primitive benchmark supplied for later
 measurement rather than a performance claim. Current HTTP paths without that
 admission lease remain unavailable. Private queue and grant-to-observer
 preamble snapshots precede the bound-call origin: scoped wire exposure is
-separate pending work, and they must never be added to its existing subtotal
+described below, and they must never be added to its existing subtotal
 or silently widen its wall. No dispatcher policy or capacity changes here.
 
 The private fixed acknowledgement accumulator now observes the actual pre-write
@@ -297,7 +297,8 @@ Complete batch parser/durability lap coverage remains pending.
 `mutation_status` adds `acknowledgement`, with a bounded shared `rpc_id`, scope,
 caller response-ready and actual-handler walls/states, per-lap begin/completion
 counts, and owned duration values. Its nine fixed acknowledgement keys include
-explicitly unavailable dispatcher queue/preamble and transport boundaries.
+explicitly unavailable dispatcher queue/preamble when no bounded lease was
+observed, and an unavailable transport boundary.
 The existing fifteen-key `phases_ms`/`phase_states`
 shape remains: its six acknowledgement keys use the shared RPC observation
 when available; its nine patch keys retain their independent per-receipt
@@ -351,6 +352,41 @@ transport boundaries and other handler work keep that full comparison open.
 The physical patch subtotal has its own accepted-attempt patch wall; the receipt
 publication wall is a third, overlapping lifetime. No combined acknowledgement
 plus asynchronous-patch sum is asserted against any of these denominators.
+
+### Concrete batch/move boundaries and admission envelope
+
+Atomic batch forward source-file writes, removals and the existing deduplicated
+target-directory sync are separate `disk_write` chunks. Journal/backup/rollback
+and later cleanup durability remain unclassified, not nested into the same
+subtotal. A failed forward call still has observed work; it does not imply a
+successful commit. Canonical batch set admission, point fallback and checkout
+batch admission now measure their actual scheduler call only. The original
+Background/WithoutCancel scheduler lifetimes, synchronous fallback work and
+shared passive wait policy are unchanged; fallback reindex execution is not
+called queue admission. A later status/recovery RPC cannot modify the bounded
+original batch ACK.
+
+Move source durability surrounds each existing `AtomicWriteFile`, excluding
+parent-directory preparation. Explicit Go parser calls cover source, target,
+package-clause inference and caller rewriting. `parse_scope` identifies these
+as `explicit_go_parser_calls_formatting_unattributed`: `go/format` internally
+combines parsing and formatting and remains unclassified, not falsely reported
+as pure parse. File writes/edits name their actual old/new parse gate. Symbol
+and atomic batch text splices explicitly report not-applicable parse with null
+time; unsupported non-Go moves retain their tool refusal and no parser time.
+The requested tool/language matrix therefore contains unsupported combinations;
+these source controls do not claim 120 successful combinations or a benchmark.
+
+Queue and grant-to-observer preamble values are exposed with
+`dispatcher_scope=queue_and_preamble_precede_bound_call_subtotal` when the
+original lease proves them. They are **not** added to `observed_ack_subtotal_ms`
+or subtracted from its bound-call wall. A separately named
+`dispatcher_to_caller_response_ready_ms` measures original bounded admission
+entry to outer caller return, still before transport serialization/delivery;
+its state distinguishes pending, invalid and unavailable. The existing
+`caller_response_ready_ms` and `phase_timing.acknowledgement_wall_ms` retain
+their original after-classification bound-call origin. These are alternative
+envelopes, not additive walls. No partial subtotal becomes a complete 5% proof.
 
 ## Logical source-operation witness (transport pending)
 

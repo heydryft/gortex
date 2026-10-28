@@ -38,6 +38,10 @@ type acknowledgementPayload struct {
 	CombinedAckPatchSumState string                             `json:"combined_ack_patch_sum_state"`
 	ExistingPhaseScope       string                             `json:"existing_ack_phase_scope"`
 	PublicationResidualState string                             `json:"publication_residual_state"`
+	DispatcherScope          string                             `json:"dispatcher_scope"`
+	DispatcherReplyMS        *float64                           `json:"dispatcher_to_caller_response_ready_ms"`
+	DispatcherReplyState     string                             `json:"dispatcher_response_state"`
+	ParserScope              string                             `json:"parse_scope"`
 }
 
 func buildAcknowledgementPayload(snapshot *editAcknowledgementSnapshot, state string) acknowledgementPayload {
@@ -45,6 +49,7 @@ func buildAcknowledgementPayload(snapshot *editAcknowledgementSnapshot, state st
 		State: state, Scope: "shared_rpc_mcp_bound_call", Clock: "unavailable",
 		Denominator: "bound_tool_entry_to_outer_return_before_transport_serialization",
 		ReplyState:  state, ActualState: state, SumState: "unavailable",
+		DispatcherScope: "queue_and_preamble_precede_bound_call_subtotal", DispatcherReplyState: state, ParserScope: "unobserved",
 		CombinedAckPatchSumState: "not_additive_overlapping_lifetimes",
 		ExistingPhaseScope:       "legacy_per_receipt_publication", PublicationResidualState: "legacy_per_receipt_publication",
 		PhasesMS: make(map[string]*float64, 9), PhaseStates: make(map[string]string, 9),
@@ -62,9 +67,22 @@ func buildAcknowledgementPayload(snapshot *editAcknowledgementSnapshot, state st
 	out.ReplyWallMS, out.ReplyState, out.ReplyOutcome = snapshot.ReplyWallMS, snapshot.ReplyState, snapshot.ReplyOutcome
 	out.ActualWallMS, out.ActualState = snapshot.ActualWallMS, snapshot.ActualState
 	out.ActualFinishedLate, out.Disjoint = snapshot.ActualFinishedLate, snapshot.LapsDisjoint
+	out.DispatcherReplyMS, out.DispatcherReplyState = snapshot.DispatcherReplyMS, snapshot.DispatcherReplyState
+	if out.DispatcherReplyState == "" {
+		out.DispatcherReplyState = "unavailable_dispatcher_interface"
+	}
+	if snapshot.ParserScope != "" {
+		out.ParserScope = snapshot.ParserScope
+	}
 	out.ExistingPhaseScope, out.PublicationResidualState = "shared_rpc", "unavailable_shared_rpc_scope"
 	for _, name := range []string{"dispatcher_queue", "dispatcher_preamble"} {
 		out.PhaseStates[name] = "unavailable_dispatcher_interface"
+	}
+	if snapshot.DispatcherQueueState != "" {
+		out.PhasesMS["dispatcher_queue"], out.PhaseStates["dispatcher_queue"] = snapshot.DispatcherQueueMS, snapshot.DispatcherQueueState
+	}
+	if snapshot.DispatcherState != "" {
+		out.PhasesMS["dispatcher_preamble"], out.PhaseStates["dispatcher_preamble"] = snapshot.DispatcherPreambleMS, snapshot.DispatcherState
 	}
 	out.PhaseStates["transport"] = "unavailable_boundary"
 	var subtotal float64

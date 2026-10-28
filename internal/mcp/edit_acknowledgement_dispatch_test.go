@@ -19,6 +19,14 @@ func TestAcknowledgementDispatchSnapshotKeepsSeparateOriginAndInvalidStates(t *t
 	require.Equal(t, 4.0, *snapshot.DispatcherQueueMS)
 	require.Equal(t, 6.0, *snapshot.DispatcherPreambleMS)
 	require.Equal(t, 20.0, *snapshot.ReplyWallMS, "admission timestamps do not silently move the existing bound-call origin")
+	require.Equal(t, 30.0, *snapshot.DispatcherReplyMS)
+	ack := buildAcknowledgementPayload(&snapshot, "observed")
+	require.Equal(t, "queue_and_preamble_precede_bound_call_subtotal", ack.DispatcherScope)
+	require.Equal(t, 4.0, *ack.PhasesMS["dispatcher_queue"])
+	require.Equal(t, 6.0, *ack.PhasesMS["dispatcher_preamble"])
+	require.Equal(t, 30.0, *ack.DispatcherReplyMS)
+	require.Equal(t, 20.0, *ack.ReplyWallMS)
+	require.Nil(t, ack.SubtotalMS, "outside-bound admission phases cannot become a bound-call subtotal")
 	*snapshot.DispatcherQueueMS = 999
 	require.Equal(t, 4.0, *a.snapshot().DispatcherQueueMS)
 	for _, tc := range []struct{ entered, granted time.Time }{
@@ -31,9 +39,11 @@ func TestAcknowledgementDispatchSnapshotKeepsSeparateOriginAndInvalidStates(t *t
 		require.Equal(t, "invalid_interval", invalid.DispatcherState)
 		require.Nil(t, invalid.DispatcherQueueMS)
 		require.Nil(t, invalid.DispatcherPreambleMS)
+		require.Nil(t, buildAcknowledgementPayload(&invalid, "observed").DispatcherReplyMS)
 	}
 	a.hasDispatch = false
 	missing := a.snapshot()
 	require.Nil(t, missing.DispatcherQueueMS)
 	require.Equal(t, "unavailable_dispatcher_interface", missing.DispatcherQueueState)
+	require.Nil(t, buildAcknowledgementPayload(&missing, "observed").PhasesMS["dispatcher_queue"])
 }
