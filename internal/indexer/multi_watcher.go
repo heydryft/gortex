@@ -1112,6 +1112,7 @@ func (mw *MultiWatcher) OnWorktreeChangeContext(cb WorktreeChangeCallback) {
 // cannot force a synchronous fallback, and a watcher that failed to start is
 // never reported as accepting work.
 func (mw *MultiWatcher) EnqueueFileMutation(ctx context.Context, filePath string) (*MutationTicket, error) {
+	ctx, _ = canonicalSchedulingEntry(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

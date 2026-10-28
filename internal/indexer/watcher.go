@@ -71,8 +71,11 @@ type MutationTicket struct {
 // released with the same completion/stop paths as its existing result channel;
 // it is not a separate tracing registry or completed-history collection.
 type mutationWaiter struct {
-	done        chan MutationResult
-	publication *PublicationPhaseRecord
+	done               chan MutationResult
+	publication        *PublicationPhaseRecord
+	schedulingEntered  time.Time
+	backgroundEligible bool
+	timerObservation   *canonicalPointTimer
 }
 
 // MutationResult is the terminal graph-freshness result for a ticket.
@@ -1793,6 +1796,7 @@ func (w *Watcher) handleEvent(event fswatcher.WatchEvent) {
 // resolves when this generation or a newer coalesced generation reaches a
 // terminal graph state.
 func (w *Watcher) EnqueueFileMutation(ctx context.Context, filePath string) (*MutationTicket, error) {
+	ctx, schedulingEntered := canonicalSchedulingEntry(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -1822,7 +1826,7 @@ func (w *Watcher) EnqueueFileMutation(ctx context.Context, filePath string) (*Mu
 	if w.mutationBeforeAdmission != nil {
 		w.mutationBeforeAdmission()
 	}
-	ticket := w.scheduleFileMutationWithRecord(absPath, ChangeModified, PublicationRecordFromContext(ctx))
+	ticket := w.scheduleFileMutationEntered(absPath, ChangeModified, PublicationRecordFromContext(ctx), schedulingEntered)
 	if ticket == nil {
 		return nil, errWatcherStopped
 	}
@@ -1935,13 +1939,33 @@ func (w *Watcher) scheduleFileMutation(path string, kind ChangeKind) *MutationTi
 }
 
 func (w *Watcher) scheduleFileMutationWithRecord(path string, kind ChangeKind, record *PublicationPhaseRecord) *MutationTicket {
+	var entered time.Time
+	if record != nil {
+		entered = time.Now()
+	}
+	return w.scheduleFileMutationEntered(path, kind, record, entered)
+}
+
+func (w *Watcher) scheduleFileMutationEntered(path string, kind ChangeKind, record *PublicationPhaseRecord, entered time.Time) *MutationTicket {
 	w.mu.Lock()
 	if w.stopping {
 		w.mu.Unlock()
 		return nil
 	}
+	_, hadPending := w.pending[path]
+	backgroundEligible := record != nil && !hadPending && w.observedMutationGeneration[path] == 0
+	var successorBackground *canonicalBackgroundOwner
 	if timer, exists := w.pending[path]; exists {
-		if timer.Stop() {
+		previous := w.mutationWaiters[path][w.pendingGeneration[path]].timerObservation
+		var stopStarted time.Time
+		if previous != nil && previous.background != nil {
+			stopStarted = time.Now()
+		}
+		stopped := timer.Stop()
+		if !stopStarted.IsZero() {
+			successorBackground = previous.background.stopped(previous.successor, stopStarted, time.Now(), stopped, record == nil)
+		}
+		if stopped {
 			w.asyncWork.Done()
 		}
 	}
@@ -1966,13 +1990,13 @@ func (w *Watcher) scheduleFileMutationWithRecord(path string, kind ChangeKind, r
 		}
 		w.observedMutationGeneration[path] = generation
 	}
-	w.mutationWaiters[path][generation] = mutationWaiter{done: done, publication: ticket.PublicationRecord}
-	w.armPointMutationTimerLocked(path, kind, generation, 0, time.Duration(w.config.DebounceMs)*time.Millisecond)
+	w.mutationWaiters[path][generation] = mutationWaiter{done: done, publication: ticket.PublicationRecord, schedulingEntered: entered, backgroundEligible: backgroundEligible}
+	w.armPointMutationTimerLocked(path, kind, generation, 0, time.Duration(w.config.DebounceMs)*time.Millisecond, successorBackground)
 	w.mu.Unlock()
 	return ticket
 }
 
-func (w *Watcher) armPointMutationTimerLocked(path string, kind ChangeKind, generation uint64, retryAttempt int, delay time.Duration) {
+func (w *Watcher) armPointMutationTimerLocked(path string, kind ChangeKind, generation uint64, retryAttempt int, delay time.Duration, background *canonicalBackgroundOwner) {
 	var timer *time.Timer
 	var observation *canonicalPointTimer
 	if w.mutationWaiters[path][generation].publication != nil {
@@ -1985,10 +2009,25 @@ func (w *Watcher) armPointMutationTimerLocked(path string, kind ChangeKind, gene
 		// waiters do not require a scan to establish that no observer exists.
 		observation = &canonicalPointTimer{}
 	}
+	if observation != nil {
+		waiter := w.mutationWaiters[path][generation]
+		if retryAttempt == 0 && waiter.publication != nil && waiter.backgroundEligible {
+			background = newCanonicalBackground(waiter.publication, generation, waiter.schedulingEntered)
+		}
+		observation.background, observation.successor = background, waiter.publication == nil
+		if background != nil {
+			background.armStarted(observation.successor, time.Now())
+		}
+		waiter.timerObservation = observation
+		w.mutationWaiters[path][generation] = waiter
+	}
 	w.asyncWork.Add(1)
 	timer = time.AfterFunc(delay, func() {
 		if observation != nil {
 			observation.entered = time.Now() // callback entry precedes claim/admission
+			if observation.background != nil {
+				observation.background.callback(observation.successor, observation.entered)
+			}
 			if !observation.debounce.started.IsZero() {
 				observation.debounce.entered = observation.entered
 			}
@@ -2003,10 +2042,17 @@ func (w *Watcher) armPointMutationTimerLocked(path string, kind ChangeKind, gene
 		if publication != nil && observation != nil {
 			// The mutation returned after its existing completion and cohort-release
 			// defers. Timing publication does not move Done or resource ownership.
-			publication.finishPhysicalAttempt(observation.entered, time.Now(), retryAttempt, w.logger)
+			finished := time.Now()
+			publication.finishPhysicalAttempt(observation.entered, finished, retryAttempt, w.logger)
+			if observation.background != nil {
+				observation.background.finish(publication, observation.entered, finished, retryAttempt)
+			}
 		}
 	})
 	w.pending[path] = timer
+	if observation != nil && observation.background != nil {
+		observation.background.armFinished(observation.successor, time.Now())
+	}
 }
 
 func (w *Watcher) runPointMutation(path string, kind ChangeKind, generation uint64, retryAttempt int) {
@@ -2126,7 +2172,10 @@ func (w *Watcher) schedulePointMutationRetry(path string, kind ChangeKind, gener
 	if _, exists := w.pending[path]; exists {
 		return true
 	}
-	w.armPointMutationTimerLocked(path, kind, generation, attempt, w.mutationRetryDelay(attempt))
+	if observation := w.mutationWaiters[path][generation].timerObservation; observation != nil && observation.background != nil {
+		observation.background.invalidate()
+	}
+	w.armPointMutationTimerLocked(path, kind, generation, attempt, w.mutationRetryDelay(attempt), nil)
 	return true
 }
 

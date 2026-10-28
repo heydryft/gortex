@@ -9,8 +9,10 @@ import (
 // Fixed callback-local readings, never a timer history. Initial quiet wait is
 // separate; a retry observes callback entry without relabelling its backoff.
 type canonicalPointTimer struct {
-	debounce canonicalDebounceWait
-	entered  time.Time
+	debounce   canonicalDebounceWait
+	entered    time.Time
+	background *canonicalBackgroundOwner
+	successor  bool
 }
 
 // Immutable once published. Earlier snapshots keep their original nil/value;

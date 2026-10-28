@@ -187,6 +187,7 @@ type PublicationPhaseRecord struct {
 	admissions      *canonicalAdmissionEvidence
 	coalescedWinner weak.Pointer[PublicationPhaseRecord] // identity only; never retains an evicted attempt
 	coalescedLinked bool
+	background      *canonicalBackgroundEvidence
 }
 
 type publicationMark struct {

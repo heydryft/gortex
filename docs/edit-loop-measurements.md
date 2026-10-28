@@ -113,6 +113,29 @@ actual return endpoint. Native quiet wait is not observed, and
 failure or supersession leaves this independent evidence unavailable; weak links
 cannot retain evicted entries or rebind a previously served receipt.
 
+For the specifically observed case of one requested timer canceled before its
+callback and one native successor, `requested_background` may expose an
+independent B window: accepted scheduling-call entry through the actual serving
+attempt's return. MultiWatcher routing, admission checks, mutex wait and setup
+precede the first timer arm in the genuinely measured
+`scheduling_admission_setup` lap. Request parsing and disk work before scheduler
+entry are outside B; A and B can overlap and must not be added together.
+
+The fixed partition measures initial timer-arm work, its canceled quiet wait,
+the successful timer-stop call, actual coalescing setup, successor timer-arm work,
+successor quiet wait, and the already validated physical P partition. These use
+actual ordered endpoints, not wall time minus known laps. The B wall is measured
+independently from its own start/end. Original accepted-P fields remain null.
+Earlier snapshots remain unchanged; only a fresh late observation can contain B.
+
+Prior callback entry, Stop=false, repeated resets, retries, multiple observed
+predecessors, missing/reversed boundaries, incomplete P or lost membership leave
+B unavailable. A newer event before guarded acceptance rejects the attempt;
+later work after acceptance cannot erase the historical serving identity during
+final release. No additional active-owner registry retains completed waiters. This case-specific
+partition keeps `sum_state:partial` and does not establish the100-edit or broader
+background/performance acceptance gates.
+
 The execution pair surrounds the common point executor, including its actual
 standalone or MultiWatcher parse/apply/resolve/derived implementation. It excludes
 before-image inspection and post-executor event work. `cycle_started` names the
