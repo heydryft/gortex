@@ -20,6 +20,10 @@ func TestTrackCandidatesAreLexicalImmutableAndRevisionScoped(t *testing.T) {
 	entry[0].Name, entry[0].Exclude[0] = "changed", "changed"
 	require.Equal(t, "owner", first.PrefixCandidates("owner")[0].Name)
 	require.Equal(t, []string{"kept"}, first.RootCandidates(root)[0].Exclude)
+	batch := first.TopLevelEntries()
+	batch[0].Path, batch[0].Exclude[0] = "changed", "changed"
+	require.Equal(t, root, first.TopLevelEntries()[0].Path)
+	require.Equal(t, []string{"kept"}, first.TopLevelEntries()[0].Exclude)
 	require.Nil(t, cm.pathSnapshot, "admission must not build the eager canonical-root snapshot")
 	require.NoError(t, cm.Global().AddRepo(RepoEntry{Path: filepath.Join(t.TempDir(), "next")}))
 	require.NotSame(t, first, cm.RepoTrackSnapshot())

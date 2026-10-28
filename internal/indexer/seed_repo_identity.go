@@ -15,11 +15,8 @@ type seedIdentityWitness struct {
 	token    *byte
 }
 
-func (mi *MultiIndexer) captureSeedIdentity(root string) seedIdentityWitness {
-	witness := seedIdentityWitness{root: absRepoRoot(root), snapshot: mi.repoLoads.snap.Load()}
-	if mi.configMgr != nil {
-		witness.config = mi.configMgr.RepoTrackSnapshot()
-	}
+func (mi *MultiIndexer) captureSeedIdentity(root string, configuration *config.RepoTrackSnapshot) seedIdentityWitness {
+	witness := seedIdentityWitness{root: absRepoRoot(root), config: configuration, snapshot: mi.repoLoads.snap.Load()}
 	if witness.snapshot != nil {
 		if i, found := witness.snapshot.find(witness.root); found {
 			witness.token = witness.snapshot.records[i].identityToken

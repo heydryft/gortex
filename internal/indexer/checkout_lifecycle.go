@@ -4257,7 +4257,8 @@ func (l *CheckoutLifecycle) Seed(ctx context.Context) error {
 	var recordErrs []error
 	seeded := map[string]string{}
 	if l.cfgMgr != nil {
-		for _, entry := range l.mi.ResolveConfiguredRepos(ctx, l.cfgMgr.Global().Repos) {
+		configuration := l.cfgMgr.RepoTrackSnapshot()
+		for _, entry := range l.mi.ResolveConfiguredRepos(ctx, configuration.TopLevelEntries()) {
 			abs, err := filepath.Abs(entry.Path)
 			if err != nil {
 				abs = entry.Path
@@ -4276,7 +4277,7 @@ func (l *CheckoutLifecycle) Seed(ctx context.Context) error {
 				continue
 			}
 			started = stageStarted("record_checkout", zap.String("prefix", prefix))
-			identityWitness := l.mi.captureSeedIdentity(abs)
+			identityWitness := l.mi.captureSeedIdentity(abs, configuration)
 			identity, err := l.recordCheckout(ctx, prefix, abs, TrackSourceConfig, true)
 			stageCompleted("record_checkout", started, err,
 				zap.String("prefix", prefix),

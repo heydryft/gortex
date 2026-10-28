@@ -14,10 +14,15 @@ type RepoTrackSnapshot struct {
 	byPrefix  map[string][]RepoEntry
 	byBase    map[string][]RepoEntry
 	rootPaths []string
+	entries   []RepoEntry
 }
 
 func (s *RepoTrackSnapshot) TopLevelRoots() []string {
 	return append([]string(nil), s.rootPaths...)
+}
+
+func (s *RepoTrackSnapshot) TopLevelEntries() []RepoEntry {
+	return copyTrackEntries(s.entries)
 }
 
 func (s *RepoTrackSnapshot) PrefixCandidates(prefix string) []RepoEntry {
@@ -55,6 +60,7 @@ func (cm *ConfigManager) RepoTrackSnapshot() *RepoTrackSnapshot {
 		prefix := ResolvePrefix(entry)
 		s.byPrefix[prefix] = append(s.byPrefix[prefix], entry)
 		s.rootPaths = append(s.rootPaths, entry.Path)
+		s.entries = append(s.entries, entry)
 	}
 	for _, entry := range gc.repoEntriesLocked() {
 		entry.Exclude = append([]string(nil), entry.Exclude...)
