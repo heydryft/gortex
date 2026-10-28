@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"weak"
 
 	"github.com/zzet/gortex/internal/agents"
 	"github.com/zzet/gortex/internal/indexer"
@@ -154,6 +155,9 @@ type mutationCommitRecord struct {
 	// evidence can outlive that ownership, so eviction must clear this too.
 	acknowledgement *editAcknowledgement
 	readRepair      *mutationReadRepairObservation
+	// Measurement-only admission witness. Public reindex fields are filled
+	// after waiting and deliberately omit Receipt on immediate success.
+	readRepairAdmission weak.Pointer[mutationReceipt]
 	// Only batchAcknowledgementCommit uses this fixed-size identity. It has
 	// no disk/graph outcome and cannot enter any physical mutation index.
 	batchOwner [32]byte
@@ -337,9 +341,14 @@ func (r *mutationCommitRecord) recordGraphForReceipt(expectedReceipt string, out
 	if r.reindexReceipt != outcome.Receipt {
 		r.pendingSourceRecovered = false
 	}
-	if r.reindexReceipt != outcome.Receipt || r.reindexGeneration != outcome.Generation ||
-		(outcome.checkoutID != "" && (r.checkoutID != outcome.checkoutID || r.checkoutIncarnation != outcome.checkoutIncarnation)) {
+	admission := r.readRepairAdmission.Value()
+	compatibleAdmission := admission != nil && admission.generation == outcome.Generation &&
+		(outcome.Receipt == "" || outcome.Receipt == admission.id) &&
+		(outcome.checkoutID == "" || (r.checkoutID == outcome.checkoutID && r.checkoutIncarnation == outcome.checkoutIncarnation))
+	if !compatibleAdmission && (admission != nil || r.reindexReceipt != outcome.Receipt || r.reindexGeneration != outcome.Generation ||
+		(outcome.checkoutID != "" && (r.checkoutID != outcome.checkoutID || r.checkoutIncarnation != outcome.checkoutIncarnation))) {
 		r.readRepair = nil
+		r.readRepairAdmission = weak.Pointer[mutationReceipt]{}
 	}
 	if ledger != nil {
 		ledger.unbindFreshnessLocked(r)
@@ -507,6 +516,7 @@ func (l *mutationCommitLedger) evictLocked(now time.Time) {
 			record.publication = nil
 			record.acknowledgement = nil
 			record.readRepair = nil
+			record.readRepairAdmission = weak.Pointer[mutationReceipt]{}
 			record.mu.Unlock()
 			delete(l.byID, record.id)
 			if record.key != "" && l.byKey[record.key] == record {
@@ -525,6 +535,7 @@ func (l *mutationCommitLedger) evictLocked(now time.Time) {
 		oldest.publication = nil
 		oldest.acknowledgement = nil
 		oldest.readRepair = nil
+		oldest.readRepairAdmission = weak.Pointer[mutationReceipt]{}
 		oldest.mu.Unlock()
 		delete(l.byID, oldest.id)
 		if oldest.key != "" && l.byKey[oldest.key] == oldest {

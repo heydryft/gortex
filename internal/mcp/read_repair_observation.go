@@ -45,6 +45,7 @@ type mutationReadRepairWitness struct {
 	record      weak.Pointer[mutationCommitRecord]
 	indexer     weak.Pointer[indexer.Indexer]
 	publication weak.Pointer[indexer.PublicationPhaseRecord]
+	admission   weak.Pointer[mutationReceipt]
 	id          string
 	fingerprint string
 	absPath     string
@@ -58,8 +59,47 @@ type mutationReadRepairWitness struct {
 }
 
 func (s *Server) readRepairObserver(ctx context.Context, absPath string, idx *indexer.Indexer) *indexer.ReadRepairObserver {
-	if idx == nil {
+	witness, ok := s.captureReadRepairWitness(absPath, idx)
+	if !ok {
 		return nil
+	}
+	key, _ := daemon.MCPRequestIDKeyForContext(ctx)
+	return &indexer.ReadRepairObserver{Session: SessionIDFromContext(ctx), RequestIDKey: key, Complete: witness.complete}
+}
+
+// Bind the actual existing ticket before waiting, without changing public
+// pending/result fields. All receipt identity fields read here are immutable.
+// No publication/recorder methods or mutable receipt state are read under the
+// existing ledger -> record locks.
+func (s *Server) bindReadRepairAdmission(absPath string, publication *indexer.PublicationPhaseRecord, admission *mutationReceipt) {
+	if publication == nil || admission == nil || admission.generation == 0 || admission.checkoutScoped || admission.path != absPath {
+		return
+	}
+	ledger := &s.mutationCommits
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+	for i := len(ledger.ordered) - 1; i >= 0; i-- {
+		record := ledger.ordered[i]
+		if !record.isPhysicalCommit() {
+			continue
+		}
+		record.mu.Lock()
+		match := record.absPath == absPath
+		if match && ledger.byID[record.id] == record && record.owner == s && record.disk == mutationDiskCommitted &&
+			record.commitSeq != 0 && record.newSHA != "" && record.publication == publication &&
+			record.readRepairAdmission == (weak.Pointer[mutationReceipt]{}) {
+			record.readRepairAdmission = weak.Make(admission)
+		}
+		record.mu.Unlock()
+		if match {
+			return
+		}
+	}
+}
+
+func (s *Server) captureReadRepairWitness(absPath string, idx *indexer.Indexer) (mutationReadRepairWitness, bool) {
+	if idx == nil {
+		return mutationReadRepairWitness{}, false
 	}
 	ledger := &s.mutationCommits
 	ledger.mu.Lock()
@@ -76,27 +116,24 @@ func (s *Server) readRepairObserver(ctx context.Context, absPath string, idx *in
 		}
 		// The newest physical entry is authoritative even if it is not yet
 		// eligible. Never fall back to an older edit of the same path.
+		admission := record.readRepairAdmission.Value()
 		if ledger.byID[record.id] == record && record.owner == s && record.disk == mutationDiskCommitted &&
 			record.commitSeq != 0 && record.newSHA != "" && record.publication != nil &&
-			record.reindexReceipt != "" && record.reindexGeneration != 0 && record.readRepair == nil &&
+			admission != nil && admission.generation != 0 && admission.path == absPath && !admission.checkoutScoped && record.readRepair == nil &&
 			(!record.graphRecorded || record.graph == mutationGraphPending) {
 			witness = mutationReadRepairWitness{
 				server: weak.Make(s), record: weak.Make(record), indexer: weak.Make(idx),
 				publication: weak.Make(record.publication), id: record.id, fingerprint: record.fingerprint,
-				absPath: absPath, blobSHA: record.newSHA, receipt: record.reindexReceipt,
+				admission: weak.Make(admission), absPath: absPath, blobSHA: record.newSHA, receipt: admission.id,
 				checkout: record.checkoutID, incarnation: record.checkoutIncarnation,
-				commitSeq: record.commitSeq, generation: record.reindexGeneration, committedAt: record.committedAt,
+				commitSeq: record.commitSeq, generation: admission.generation, committedAt: record.committedAt,
 			}
 		}
 		record.mu.RUnlock()
 		break
 	}
 	ledger.mu.Unlock()
-	if witness.id == "" {
-		return nil
-	}
-	key, _ := daemon.MCPRequestIDKeyForContext(ctx)
-	return &indexer.ReadRepairObserver{Session: SessionIDFromContext(ctx), RequestIDKey: key, Complete: witness.complete}
+	return witness, witness.id != ""
 }
 
 func (w mutationReadRepairWitness) complete(observation indexer.ReadRepairObservation) {
@@ -157,7 +194,9 @@ func (w mutationReadRepairWitness) bind(accepted mutationReadRepairObservation) 
 	defer record.mu.Unlock()
 	if record.owner != s || record.id != w.id || record.commitSeq != w.commitSeq || record.newSHA != w.blobSHA ||
 		record.absPath != w.absPath || record.fingerprint != w.fingerprint || record.disk != mutationDiskCommitted ||
-		record.reindexReceipt != w.receipt || record.reindexGeneration != w.generation ||
+		(record.reindexReceipt != "" && record.reindexReceipt != w.receipt) ||
+		(record.reindexGeneration != 0 && record.reindexGeneration != w.generation) ||
+		w.admission.Value() == nil || record.readRepairAdmission != w.admission ||
 		record.checkoutID != w.checkout || record.checkoutIncarnation != w.incarnation ||
 		record.publication == nil || record.publication != w.publication.Value() || record.readRepair != nil {
 		return

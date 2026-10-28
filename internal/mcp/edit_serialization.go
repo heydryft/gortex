@@ -576,6 +576,7 @@ func (s *Server) mutationReindexState(ctx context.Context, absPath string) mutat
 			}
 			if ticket != nil {
 				receipt := s.trackMutationTicket(ticket)
+				s.bindReadRepairAdmission(absPath, ticket.PublicationRecord, receipt)
 				receipt.pinView(pin)
 				// The disk write and ticket admission are complete. This wait
 				// must not announce another ordinary writer while the watcher
