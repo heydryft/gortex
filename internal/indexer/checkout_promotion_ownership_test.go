@@ -102,12 +102,14 @@ func TestPromotionPurgeRejectsAReplacedRegistration(t *testing.T) {
 	require.NoError(t, err)
 	owned, err := f.mi.prefixOwnerForRoot(t.Context(), "src", first)
 	require.NoError(t, err)
-	_, _, err = f.mi.UntrackRepoChecked(t.Context(), "src")
+	// Retire through the lifecycle so the exact old reader/publisher admission
+	// is finalized before installing a replacement. Deleting only the registry
+	// and catalog row must not bypass that owner's admission tombstone.
+	_, err = f.lc.Untrack(t.Context(), first)
 	require.NoError(t, err)
-	require.NoError(t, f.cm.Global().RemoveRepo(first))
-	// The old catalog row is intentionally removed by its exact lifecycle
-	// identity before registering a different checkout at the same prefix.
-	require.NoError(t, f.catalog.DeleteDedicatedGraph(t.Context(), GraphIDFor("src")))
+	_, found, err := f.catalog.GetDedicatedGraph(t.Context(), GraphIDFor("src"))
+	require.NoError(t, err)
+	require.False(t, found)
 	registered, err := f.lc.Register(t.Context(), config.RepoEntry{Path: other, Name: "src"}, TrackSourceCLI)
 	require.NoError(t, err)
 	require.NoError(t, registered.CatalogErr)
