@@ -3,9 +3,35 @@ package indexer
 import (
 	"context"
 	"errors"
+	"runtime"
 	"sync"
 	"testing"
+	"time"
+	"weak"
 )
+
+func TestReadRepairAcceptanceRequiresConcreteOwnerAndBytes(t *testing.T) {
+	owner := &Indexer{}
+	replacement := &Indexer{}
+	now := time.Now()
+	observation := ReadRepairObservation{
+		generation: 2, started: now, finished: now,
+		causesComplete: true, executionSucceeded: true,
+		acceptedBlobSHA: readRepairBlobSHA([]byte("accepted")), owner: weak.Make(owner),
+	}
+	if !observation.AcceptedFor(owner, readRepairBlobSHA([]byte("accepted"))) {
+		t.Fatal("matching actual owner/content unavailable")
+	}
+	if observation.AcceptedFor(replacement, observation.acceptedBlobSHA) || observation.AcceptedFor(owner, readRepairBlobSHA([]byte("newer"))) {
+		t.Fatal("replacement owner or newer content borrowed earlier evidence")
+	}
+	observation.owner = weak.Pointer[Indexer]{}
+	if observation.AcceptedFor(owner, observation.acceptedBlobSHA) {
+		t.Fatal("missing owner fabricated an accepted execution")
+	}
+	runtime.KeepAlive(owner)
+	runtime.KeepAlive(replacement)
+}
 
 func TestRepositoryReadRepairUsesGitBlobIdentity(t *testing.T) {
 	for _, test := range []struct{ content, oid string }{
@@ -19,7 +45,7 @@ func TestRepositoryReadRepairUsesGitBlobIdentity(t *testing.T) {
 }
 
 func TestRepositoryReadRepairAcceptedContentCannotChangeOwners(t *testing.T) {
-	observation := &repositoryReadRepairObservation{path: "target.go"}
+	observation := &ReadRepairObservation{path: "target.go"}
 	older := readRepairBlobSHA([]byte("old bytes"))
 	newer := readRepairBlobSHA([]byte("new bytes"))
 	observation.acceptFreshBlob("other.go", older)
@@ -36,7 +62,7 @@ func TestRepositoryReadRepairAcceptedContentCannotChangeOwners(t *testing.T) {
 }
 
 func TestRepositoryReadRepairCausesKeepReusedWireIDsDistinct(t *testing.T) {
-	request := &repositoryReadRepairRequest{session: "session", requestIDKey: "n:7", complete: func(repositoryReadRepairObservation) {}}
+	request := &repositoryReadRepairRequest{session: "session", requestIDKey: "n:7", complete: func(ReadRepairObservation) {}}
 	waiters := []*repositoryMutationWaiter{
 		{generation: 4, readRepair: request},
 		{generation: 5, readRepair: request},
@@ -63,7 +89,7 @@ func TestRepositoryReadRepairUnobservedPathDoesNotAllocate(t *testing.T) {
 }
 
 func TestRepositoryReadRepairCauseOverflowAndBroadScopesRemainUnavailable(t *testing.T) {
-	request := &repositoryReadRepairRequest{complete: func(repositoryReadRepairObservation) {}}
+	request := &repositoryReadRepairRequest{complete: func(ReadRepairObservation) {}}
 	waiters := make([]*repositoryMutationWaiter, repositoryReadRepairCauseCap+1)
 	for i := range waiters {
 		waiters[i] = &repositoryMutationWaiter{generation: uint64(i + 1), readRepair: request}
@@ -90,9 +116,9 @@ func TestRepositoryReadRepairCompletionIsOutsideCoordinatorLocks(t *testing.T) {
 			})
 			var batchGate sync.RWMutex
 			coordinator.batchMutationGate = &batchGate
-			var snapshot repositoryReadRepairObservation
+			var snapshot ReadRepairObservation
 			_, err := coordinator.reconcileObserved(t.Context(), []string{"file.go"}, &repositoryReadRepairRequest{
-				complete: func(observation repositoryReadRepairObservation) {
+				complete: func(observation ReadRepairObservation) {
 					// Both operations would deadlock if completion still owned
 					// coordinator.mu or the repository mutation lane.
 					coordinator.mu.Lock()
@@ -133,7 +159,7 @@ func TestRepositoryReadRepairContentRequiresSuccessfulAuthorityAndResult(t *test
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			coordinator := newRepositoryMutationCoordinator(nil)
-			coordinator.readRepairExecutor = func(_ []string, observation *repositoryReadRepairObservation) (*IndexResult, error) {
+			coordinator.readRepairExecutor = func(_ []string, observation *ReadRepairObservation) (*IndexResult, error) {
 				observation.acceptFreshBlob("file.go", readRepairBlobSHA([]byte("accepted bytes")))
 				return test.result, nil
 			}
@@ -145,9 +171,9 @@ func TestRepositoryReadRepairContentRequiresSuccessfulAuthorityAndResult(t *test
 					return errors.New("superseded authority")
 				}
 			}
-			var snapshot repositoryReadRepairObservation
+			var snapshot ReadRepairObservation
 			_, _ = coordinator.reconcileObserved(t.Context(), []string{"file.go"}, &repositoryReadRepairRequest{
-				complete: func(observation repositoryReadRepairObservation) { snapshot = observation },
+				complete: func(observation ReadRepairObservation) { snapshot = observation },
 			})
 			coordinator.work.Wait()
 			if snapshot.executionSucceeded || snapshot.acceptedBlobSHA != "" {

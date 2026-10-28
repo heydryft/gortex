@@ -196,7 +196,7 @@ const reparsePendingEnrichmentBatchSize = 256
 
 type reparsePendingEnrichmentBatch struct {
 	publication *PublicationStamps // optional local canonical attempt; never a live record
-	readRepair  *repositoryReadRepairObservation
+	readRepair  *ReadRepairObservation
 	// npmConsumerFiles are unchanged importers parked by this mutation.
 	npmConsumerFiles      []string
 	byFile                map[string]bool

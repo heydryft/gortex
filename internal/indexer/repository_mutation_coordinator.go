@@ -109,7 +109,7 @@ type repositoryMutationCoordinator struct {
 	// coordinators leave it nil; tests set it before admitting concurrent work.
 	batchAdmissionHook func()
 	executor           repositoryMutationExecutor
-	readRepairExecutor func([]string, *repositoryReadRepairObservation) (*IndexResult, error)
+	readRepairExecutor func([]string, *ReadRepairObservation) (*IndexResult, error)
 	// outputGeneration wraps ONE executed coalesced batch in an
 	// output-generation receipt. The coalescing lane, not the queuing caller,
 	// is the mutation entry point here: many callers merge into one execution,
@@ -229,7 +229,7 @@ func (c *repositoryMutationCoordinator) drain() {
 		authorityRequired := c.authorityRequired
 		c.mu.Unlock()
 
-		var observation *repositoryReadRepairObservation
+		var observation *ReadRepairObservation
 		if readRepairPending {
 			observation = newRepositoryReadRepairObservation(generation, paths, waiters)
 		}
@@ -512,7 +512,7 @@ func (mi *MultiIndexer) repositoryMutationCoordinator(repoPrefix string) *reposi
 		coordinator = newRepositoryMutationCoordinator(func(paths []string) (*IndexResult, error) {
 			return mi.incrementalReindexRepoRaw(repoPrefix, paths)
 		})
-		coordinator.readRepairExecutor = func(paths []string, observation *repositoryReadRepairObservation) (*IndexResult, error) {
+		coordinator.readRepairExecutor = func(paths []string, observation *ReadRepairObservation) (*IndexResult, error) {
 			return mi.incrementalReindexRepoRawMode(repoPrefix, paths, incrementalPathMode{
 				detectDeletions: true, readRepair: observation,
 			})

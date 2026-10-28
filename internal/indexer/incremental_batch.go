@@ -321,7 +321,7 @@ func (idx *Indexer) reindexIncrementalChunk(
 		// the partial chunk and retries this file in the next chunk; this
 		// prevents repositories from each holding a partial batch while all
 		// wait for capacity owned by the others.
-		var repair *repositoryReadRepairObservation
+		var repair *ReadRepairObservation
 		if markerBatch != nil {
 			repair = markerBatch.readRepair
 		}

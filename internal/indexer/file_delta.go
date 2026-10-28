@@ -94,7 +94,7 @@ func (idx *Indexer) prepareFileDeltaWithAdmission(filePath string, tryOnly bool)
 	return idx.prepareFileDeltaWithAdmissionObserved(filePath, tryOnly, nil)
 }
 
-func (idx *Indexer) prepareFileDeltaWithAdmissionObserved(filePath string, tryOnly bool, repair *repositoryReadRepairObservation) (fileDeltaProbe, bool, bool) {
+func (idx *Indexer) prepareFileDeltaWithAdmissionObserved(filePath string, tryOnly bool, repair *ReadRepairObservation) (fileDeltaProbe, bool, bool) {
 	var probe fileDeltaProbe
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {

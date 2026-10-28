@@ -10,6 +10,14 @@ import (
 
 const repositoryReadRepairCauseCap = 8
 
+// ReadRepairObserver requests one bounded observation of an already-needed
+// repository reconcile. It cannot change its paths, scheduling or ownership.
+type ReadRepairObserver struct {
+	Session      string
+	RequestIDKey string
+	Complete     func(ReadRepairObservation)
+}
+
 // A reader is an admission cause, never the owner of the work performed by
 // drain. In particular a session may reuse a wire ID during the same drain.
 // The existing waiter generation distinguishes those admissions.
@@ -22,14 +30,14 @@ type repositoryReadRepairCause struct {
 type repositoryReadRepairRequest struct {
 	session      string
 	requestIDKey string
-	complete     func(repositoryReadRepairObservation)
+	complete     func(ReadRepairObservation)
 }
 
-// repositoryReadRepairObservation is a value copy scoped to one coordinator
+// ReadRepairObservation is a value copy scoped to one coordinator
 // incarnation. Its generation belongs to the executed drain, not any caller.
 // This independent executor window is not additive with a receipt's quiet
 // wait, acknowledgement, background window or later no-op watcher attempt.
-type repositoryReadRepairObservation struct {
+type ReadRepairObservation struct {
 	generation     uint64
 	path           string
 	started        time.Time
@@ -47,7 +55,31 @@ type repositoryReadRepairObservation struct {
 	owner weak.Pointer[Indexer]
 }
 
-func (o *repositoryReadRepairObservation) acceptFreshBlob(path, blobSHA string) {
+// AcceptedFor verifies the executed incarnation and exact accepted Git blob.
+// It deliberately says nothing about the original request's B coverage.
+func (o ReadRepairObservation) AcceptedFor(owner *Indexer, blobSHA string) bool {
+	return owner != nil && o.owner.Value() == owner && o.executionSucceeded &&
+		o.causesComplete && !o.contentAmbiguous && blobSHA != "" && o.acceptedBlobSHA == blobSHA &&
+		o.generation != 0 && !o.started.IsZero() && !o.finished.Before(o.started)
+}
+
+// Bounds are the actual execution endpoints, independent of receipt lifetime.
+func (o ReadRepairObservation) Bounds() (time.Time, time.Time) { return o.started, o.finished }
+
+// Generation identifies the executed drain within its concrete owner.
+func (o ReadRepairObservation) Generation() uint64 { return o.generation }
+
+// Cause returns at most eight observed reader admissions. Reused wire IDs
+// remain distinct through the existing admission generation, not a new ID.
+func (o ReadRepairObservation) Cause(i int) (session, requestIDKey string, admissionGeneration uint64, ok bool) {
+	if i < 0 || i >= o.causeCount {
+		return "", "", 0, false
+	}
+	cause := o.causes[i]
+	return cause.session, cause.requestIDKey, cause.admissionGeneration, true
+}
+
+func (o *ReadRepairObservation) acceptFreshBlob(path, blobSHA string) {
 	if o == nil || o.contentAmbiguous || path != o.path || blobSHA == "" {
 		return
 	}
@@ -72,18 +104,18 @@ func readRepairBlobSHA(src []byte) string {
 // newRepositoryReadRepairObservation does not read a clock or allocate on the
 // ordinary unobserved path. Full/multipath drains deliberately have no scoped
 // observation; they cannot prove publication of this one pending edit.
-func newRepositoryReadRepairObservation(generation uint64, paths []string, waiters []*repositoryMutationWaiter) *repositoryReadRepairObservation {
+func newRepositoryReadRepairObservation(generation uint64, paths []string, waiters []*repositoryMutationWaiter) *ReadRepairObservation {
 	if len(paths) != 1 {
 		return nil
 	}
-	var observation *repositoryReadRepairObservation
+	var observation *ReadRepairObservation
 	for _, waiter := range waiters {
 		request := waiter.readRepair
 		if request == nil || request.complete == nil {
 			continue
 		}
 		if observation == nil {
-			observation = &repositoryReadRepairObservation{
+			observation = &ReadRepairObservation{
 				generation: generation, path: paths[0], causesComplete: true,
 			}
 		}
@@ -102,7 +134,7 @@ func newRepositoryReadRepairObservation(generation uint64, paths []string, waite
 
 // Call only after releasing coordinator, lane and batch locks. Each consumer
 // receives a fresh value; no retained waiter or mutable observation escapes.
-func completeRepositoryReadRepair(observation *repositoryReadRepairObservation, waiters []*repositoryMutationWaiter) {
+func completeRepositoryReadRepair(observation *ReadRepairObservation, waiters []*repositoryMutationWaiter) {
 	if observation == nil {
 		return
 	}
