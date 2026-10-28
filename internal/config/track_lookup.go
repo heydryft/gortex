@@ -43,11 +43,15 @@ func (cm *ConfigManager) RepoTrackSnapshot() *RepoTrackSnapshot {
 		return cm.trackSnapshot
 	}
 	s := &RepoTrackSnapshot{byPrefix: make(map[string][]RepoEntry), byBase: make(map[string][]RepoEntry)}
-	for _, entry := range gc.repoEntriesLocked() {
+	// Prefix ownership follows the existing top-level admission contract.
+	// Project-only entries still supply overrides through the root lookup.
+	for _, entry := range gc.Repos {
 		entry.Exclude = append([]string(nil), entry.Exclude...)
 		prefix := ResolvePrefix(entry)
 		s.byPrefix[prefix] = append(s.byPrefix[prefix], entry)
-		// Derived worktree names are queried through their original basename.
+	}
+	for _, entry := range gc.repoEntriesLocked() {
+		entry.Exclude = append([]string(nil), entry.Exclude...)
 		base := pathkey.IdentityKey(filepath.Base(entry.Path))
 		s.byBase[base] = append(s.byBase[base], entry)
 	}

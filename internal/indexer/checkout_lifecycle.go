@@ -745,40 +745,23 @@ func (l *CheckoutLifecycle) Register(
 	ctx context.Context,
 	entry config.RepoEntry,
 	source store_sqlite.IntentSourceKind,
-) (RegisterResult, error) {
+) (outcome RegisterResult, err error) {
 	if l == nil || l.mi == nil {
 		return RegisterResult{}, errors.New("indexer: checkout lifecycle is not wired")
 	}
-	absPath, err := filepath.Abs(entry.Path)
+	defer func() {
+		var collision *PrefixCollisionError
+		if errors.As(err, &collision) {
+			l.mi.logCollision(collision)
+		}
+	}()
+	entry, err = l.prepareRegistrationEntry(ctx, entry, time.Now().Add(prefixOwnershipTimeout))
 	if err != nil {
-		return RegisterResult{}, fmt.Errorf("resolve path %s: %w", entry.Path, err)
+		return RegisterResult{}, err
 	}
-	// Existing config is the restart authority. Do not accept a rename that
-	// AddRepo would discard, and keep a pinned name when warmup has not loaded it.
-	if l.cfgMgr != nil {
-		if configured := l.cfgMgr.RepoPathLookup()(absPath); configured != nil {
-			if entry.Name != "" && entry.Name != config.ResolvePrefix(*configured) {
-				return RegisterResult{}, fmt.Errorf("%s is already configured; set name: %s in the global config and run `gortex daemon reload`", absPath, entry.Name)
-			}
-			if entry.Name == "" {
-				entry.Name = configured.Name
-			}
-		}
-	}
-	// One fan-out for the whole registration: the family reconciliation at the
-	// end drives the same cleanup hooks a sweep does, and each of them tells
-	// the sessions the tracked set moved.
+	absPath := entry.Path
+	// Coalesce notifications only after side-effect-free admission preparation.
 	defer l.beginBatch()()
-
-	// A linked worktree of a family that already has a corpus is named by the
-	// rule at the naming seam rather than by its basename or its branch. The
-	// name is pinned onto the entry, so the indexer persists it and every later
-	// pass reads the decision back instead of taking it again.
-	if entry.Name == "" {
-		if prefix := l.dedicatedPrefixFor(ctx, absPath); prefix != "" {
-			entry.Name = prefix
-		}
-	}
 
 	// The source tells a config reload's re-registration from a user's track.
 	result, err := l.mi.TrackRepoCtx(WithIndexOrigin(ctx, "checkout_register_"+string(source)), entry)

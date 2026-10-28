@@ -158,9 +158,6 @@ type realController struct {
 // Track indexes a new repository and persists it to the global config.
 // Path is resolved to an absolute form before the MultiIndexer sees it.
 func (c *realController) Track(ctx context.Context, p daemon.TrackParams) (json.RawMessage, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if c.multiIndexer == nil {
 		return nil, fmt.Errorf("multi-repo indexer not initialized")
 	}
@@ -172,6 +169,11 @@ func (c *realController) Track(ctx context.Context, p daemon.TrackParams) (json.
 		return nil, fmt.Errorf("checkout lifecycle not initialized")
 	}
 	entry := config.RepoEntry{Path: absPath, Name: p.Name, Ref: p.Ref, AsWorktree: p.AsWorktree}
+	if err := c.lifecycle.PreflightTrack(ctx, entry); err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	// Project association from TrackParams.Project isn't wired yet — the
 	// config package doesn't expose an AddRepoToProject helper. Callers

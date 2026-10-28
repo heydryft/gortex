@@ -2628,7 +2628,7 @@ func (e *PrefixCollisionError) Error() string {
 // logCollision warns about a configured repository that is not loaded
 // because another repository owns its prefix.
 func (mi *MultiIndexer) logCollision(err error) {
-	if err == nil {
+	if err == nil || mi.logger == nil {
 		return
 	}
 	if _, logged := mi.loggedCollisions.LoadOrStore(err.Error(), struct{}{}); !logged {
@@ -2679,9 +2679,17 @@ func (mi *MultiIndexer) resolveTrackPrefixContext(ctx context.Context, entry *co
 		observation, err := mi.observePrefixOwnershipBefore(ctx, base, absPath, before, candidate)
 		return trackPrefixResolution{prefix: base, cfg: config.Default(), ownership: observation}, err
 	}
+	configuration := mi.configMgr.RepoTrackSnapshot()
 
 	// Read the workspace once, before acquiring the registry lock. The same
 	// snapshot supplies both membership and the eventual config publication.
+	if lookup == nil {
+		configured, err := mi.configuredTrackEntry(ctx, absPath, before)
+		if err != nil {
+			return trackPrefixResolution{prefix: base}, err
+		}
+		lookup = func(string) *config.RepoEntry { return configured }
+	}
 	cfg, publish := mi.configMgr.PrepareWorkspaceConfig(base, absPath, lookup)
 	declaredWS := entry.Workspace
 	if declaredWS == "" {
@@ -2722,6 +2730,10 @@ func (mi *MultiIndexer) resolveTrackPrefixContext(ctx context.Context, entry *co
 	// Prepared config publication is memory-only. Revalidate its exact owner
 	// witness under mu; no filesystem callback or Stat runs under this lock.
 	mi.mu.Lock()
+	if mi.configMgr.RepoTrackSnapshot() != configuration {
+		mi.mu.Unlock()
+		return resolution, errPrefixConfigChanged
+	}
 	if !observation.snapshot.matchesLocked(mi) {
 		mi.mu.Unlock()
 		return resolution, errPrefixOwnerChanged
@@ -2789,7 +2801,13 @@ func (mi *MultiIndexer) TrackRepoCtx(ctx context.Context, entry config.RepoEntry
 // the source and must keep it open until this method returns.
 func (mi *MultiIndexer) trackRepoSourceCtx(
 	ctx context.Context, entry config.RepoEntry, content source.ContentSource,
-) (*IndexResult, error) {
+) (result *IndexResult, err error) {
+	defer func() {
+		var collision *PrefixCollisionError
+		if errors.As(err, &collision) {
+			mi.logCollision(collision)
+		}
+	}()
 	prepared, err := mi.prepareTrackRepoContext(ctx, entry)
 	if err != nil || prepared == nil {
 		return nil, err
@@ -2857,7 +2875,7 @@ func (mi *MultiIndexer) prepareTrackRepoContext(ctx context.Context, entry confi
 	// slugs declared inside the repo (without it every repo would fall
 	// back to `workspace = repoPrefix`, making shared-workspace cross-repo
 	// matching impossible to express).
-	checkConfigured := mi.configuredPrefixCheck()
+	checkConfigured := mi.configuredPrefixCheckContext(ctx, before)
 	resolved, err := mi.resolveTrackPrefixContext(ctx, &entry, absPath, identity, nil, checkConfigured, before, &candidate)
 	if err != nil {
 		return nil, err
@@ -3051,7 +3069,7 @@ func (mi *MultiIndexer) ReconcileRepoCtx(ctx context.Context, entry config.RepoE
 	// TrackRepoCtx so a worktree instance keeps its derived prefix on the
 	// reconcile path too; config can change between sessions and warmup-
 	// time reconcile runs after a daemon restart.
-	checkConfigured := mi.configuredPrefixCheck()
+	checkConfigured := mi.configuredPrefixCheckContext(ctx, before)
 	resolved, ownershipErr := mi.resolveTrackPrefixContext(ctx, &entry, absPath, identity, nil, checkConfigured, before, &candidate)
 	prefix, cfg := resolved.prefix, resolved.cfg
 	setupTiming.complete(ownershipErr, zap.String("prefix", prefix))

@@ -17,11 +17,12 @@ const prefixOwnershipTimeout = 2 * time.Second
 var (
 	errPrefixStatUnavailable = errors.New("repository identity stat allowance is occupied")
 	errPrefixOwnerChanged    = errors.New("repository prefix owner changed during identity observation; retry the operation")
+	errPrefixConfigChanged   = errors.New("repository configuration changed during prefix preparation; retry the operation")
 	errPrefixIdentityUnknown = errors.New("repository root identity could not be established")
 )
 
 // prefixStatAllowance is deliberately not a filesystem worker service. Native
-// Stat has no portable cancellation API. At most two observations per indexer
+// filesystem calls have no portable cancellation API. At most two observations per indexer
 // may remain physically stuck; further callers abstain without starting work.
 // Each worker captures only immutable path/function/channel inputs, never an
 // indexer, store or publication callback. Late results fit in a private buffer
