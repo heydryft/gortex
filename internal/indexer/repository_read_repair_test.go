@@ -3,6 +3,7 @@ package indexer
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 )
 
@@ -87,6 +88,8 @@ func TestRepositoryReadRepairCompletionIsOutsideCoordinatorLocks(t *testing.T) {
 				}
 				return &IndexResult{StaleFileCount: 1}, nil
 			})
+			var batchGate sync.RWMutex
+			coordinator.batchMutationGate = &batchGate
 			var snapshot repositoryReadRepairObservation
 			_, err := coordinator.reconcileObserved(t.Context(), []string{"file.go"}, &repositoryReadRepairRequest{
 				complete: func(observation repositoryReadRepairObservation) {
@@ -94,6 +97,8 @@ func TestRepositoryReadRepairCompletionIsOutsideCoordinatorLocks(t *testing.T) {
 					// coordinator.mu or the repository mutation lane.
 					coordinator.mu.Lock()
 					coordinator.mu.Unlock()
+					batchGate.Lock()
+					batchGate.Unlock()
 					if laneErr := coordinator.runExclusive(context.Background(), func() error { return nil }); laneErr != nil {
 						panic(laneErr)
 					}
@@ -107,6 +112,46 @@ func TestRepositoryReadRepairCompletionIsOutsideCoordinatorLocks(t *testing.T) {
 			}
 			if snapshot.causes[0].session != "" {
 				t.Fatal("mutable completion value escaped")
+			}
+		})
+	}
+}
+
+func TestRepositoryReadRepairContentRequiresSuccessfulAuthorityAndResult(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		result    *IndexResult
+		authority bool
+	}{
+		{name: "missing_result"},
+		{name: "full", result: &IndexResult{FullRetrack: true}},
+		{name: "failed", result: &IndexResult{FailedFiles: []string{"file.go"}}},
+		{name: "deleted", result: &IndexResult{DeletedFileCount: 1}},
+		{name: "quarantined", result: &IndexResult{QuarantinedFiles: 1}},
+		{name: "skipped", result: &IndexResult{SkippedFiles: 1}},
+		{name: "authority_refusal", result: &IndexResult{StaleFileCount: 1}, authority: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			coordinator := newRepositoryMutationCoordinator(nil)
+			coordinator.readRepairExecutor = func(_ []string, observation *repositoryReadRepairObservation) (*IndexResult, error) {
+				observation.acceptFreshBlob("file.go", readRepairBlobSHA([]byte("accepted bytes")))
+				return test.result, nil
+			}
+			if test.authority {
+				coordinator.outputGeneration = func(fn func(func(*OutputSourceContent)) error) error {
+					if err := fn(func(*OutputSourceContent) {}); err != nil {
+						return err
+					}
+					return errors.New("superseded authority")
+				}
+			}
+			var snapshot repositoryReadRepairObservation
+			_, _ = coordinator.reconcileObserved(t.Context(), []string{"file.go"}, &repositoryReadRepairRequest{
+				complete: func(observation repositoryReadRepairObservation) { snapshot = observation },
+			})
+			coordinator.work.Wait()
+			if snapshot.executionSucceeded || snapshot.acceptedBlobSHA != "" {
+				t.Fatalf("unsuccessful publisher retained content authority: %+v", snapshot)
 			}
 		})
 	}
