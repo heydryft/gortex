@@ -155,11 +155,18 @@ func TestPromotionRollbackRemovesOnlyItsUnpublishedCorpus(t *testing.T) {
 func TestPromotionDoesNotBorrowAnExactRootUnderAnotherName(t *testing.T) {
 	f := newFamilyFixture(t, "named-root")
 	t.Cleanup(f.close)
-	_, err := f.mi.TrackRepoCtx(t.Context(), config.RepoEntry{Path: f.automatic.RootPath, Name: "existing-name"})
-	require.NoError(t, err)
-	before := contentIdentities(f.store, "existing-name")
-	require.NotEmpty(t, before)
+	var registrationErr error
+	var before []string
+	f.lc.indexBarrier = func() {
+		// Let promotion decide its requested prefix first. A pre-existing
+		// registration is intentionally adopted by dedicatedPrefixFor; the
+		// race under test is a different name appearing after that decision.
+		_, registrationErr = f.mi.TrackRepoCtx(t.Context(), config.RepoEntry{Path: f.automatic.RootPath, Name: "existing-name"})
+		before = contentIdentities(f.store, "existing-name")
+	}
 	out, err := f.lc.PromoteCheckout(t.Context(), f.automatic.CheckoutID, TrackSourceCLI)
+	require.NoError(t, registrationErr)
+	require.NotEmpty(t, before)
 	var collision *PrefixCollisionError
 	require.ErrorAs(t, err, &collision, "a nil Track result under another name does not authorize the requested corpus")
 	require.True(t, out.Retryable)
