@@ -16,6 +16,7 @@ import (
 	"unsafe"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 	"modernc.org/libc"
 	sqlite3 "modernc.org/sqlite/lib"
 )
@@ -38,11 +39,66 @@ var vacuumOpenObservation atomic.Pointer[vacuumOpenProbe]
 type vacuumOpenProbe struct {
 	directory string
 	mu        sync.Mutex
-	paths     []string
+	opens     []vacuumObservedOpen
 	err       error
 	entered   chan struct{}
 	release   <-chan struct{}
 	once      sync.Once
+}
+
+type vacuumObservedOpen struct {
+	path, directory      string
+	anonymous            bool
+	device, inode, links uint64
+	mode                 uint32
+}
+
+// Inspect the actual successful OS descriptor while SQLite still owns it.
+// Never wrap it in os.File: its finalizer must not close SQLite's descriptor.
+func inspectVacuumNativeOpen(fd int32, path string, flags int32, wanted string) (opened vacuumObservedOpen, recognized bool, err error) {
+	opened.path, opened.anonymous = path, vacuumOpenIsAnonymous(flags)
+	if !opened.anonymous && !strings.HasPrefix(filepath.Base(path), "etilqs_") {
+		return opened, false, nil
+	}
+	parent := filepath.Dir(path)
+	if opened.anonymous {
+		parent = path // O_TMPFILE opens an anonymous regular inode in this directory.
+	}
+	opened.directory, err = filepath.EvalSymlinks(parent)
+	if err != nil {
+		return opened, true, err
+	}
+	if opened.directory != wanted {
+		return opened, true, fmt.Errorf("temporary open directory=%q, want %q", opened.directory, wanted)
+	}
+	var actual, directory unix.Stat_t
+	if err = unix.Fstat(int(fd), &actual); err != nil {
+		return opened, true, err
+	}
+	opened.device, opened.inode, opened.links, opened.mode = uint64(actual.Dev), uint64(actual.Ino), uint64(actual.Nlink), uint32(actual.Mode)
+	if actual.Mode&unix.S_IFMT != unix.S_IFREG {
+		return opened, true, fmt.Errorf("temporary descriptor is not a regular file: %s", path)
+	}
+	if err = unix.Stat(wanted, &directory); err != nil {
+		return opened, true, err
+	}
+	if uint64(actual.Dev) != uint64(directory.Dev) {
+		return opened, true, errors.New("temporary descriptor is on a different device from the store directory")
+	}
+	if opened.anonymous {
+		if actual.Nlink != 0 {
+			return opened, true, errors.New("anonymous temporary descriptor has a linked name")
+		}
+	} else {
+		var named unix.Stat_t
+		if err = unix.Stat(path, &named); err != nil {
+			return opened, true, err
+		}
+		if actual.Dev != named.Dev || actual.Ino != named.Ino {
+			return opened, true, errors.New("named temporary path does not match the actual descriptor")
+		}
+	}
+	return opened, true, nil
 }
 
 var observeVacuumNativeOpen = func(tls *libc.TLS, name uintptr, flags, mode int32) int32 {
@@ -52,25 +108,15 @@ var observeVacuumNativeOpen = func(tls *libc.TLS, name uintptr, flags, mode int3
 	if probe == nil || fd < 0 {
 		return fd
 	}
-	path := libc.GoString(name)
-	if !strings.HasPrefix(filepath.Base(path), "etilqs_") {
+	opened, recognized, err := inspectVacuumNativeOpen(fd, libc.GoString(name), flags, probe.directory)
+	if !recognized {
 		return fd
-	}
-	directory, err := filepath.EvalSymlinks(filepath.Dir(path))
-	if err != nil || directory != probe.directory {
-		return fd
-	}
-	// The native open has succeeded, and SQLite has not yet unlinked it.
-	// Confirm it is an actual regular file at that exact generated path.
-	info, err := os.Stat(path)
-	if err == nil && !info.Mode().IsRegular() {
-		err = fmt.Errorf("temporary open is not a regular file: %s", path)
 	}
 	probe.mu.Lock()
-	probe.paths = append(probe.paths, path)
+	probe.opens = append(probe.opens, opened)
 	probe.err = errors.Join(probe.err, err)
 	probe.mu.Unlock()
-	if probe.entered != nil {
+	if err == nil && probe.entered != nil {
 		probe.once.Do(func() { close(probe.entered); <-probe.release })
 	}
 	return fd
@@ -93,14 +139,23 @@ func TestVacuumPhysicallyOpensTempOnStoreVolume(t *testing.T) {
 	probe.mu.Lock()
 	defer probe.mu.Unlock()
 	require.NoError(t, probe.err)
-	require.NotEmpty(t, probe.paths, "a successful pragma alone is not physical placement proof")
+	require.NotEmpty(t, probe.opens, "a successful pragma alone is not physical placement proof")
 	want, err := filepath.EvalSymlinks(filepath.Dir(s.Path()))
 	require.NoError(t, err)
-	for _, path := range probe.paths {
-		directory, err := filepath.EvalSymlinks(filepath.Dir(path))
-		require.NoError(t, err)
-		require.Equal(t, want, directory)
-		t.Logf("VACUUM actual native temp open: %s", path)
+	var parent unix.Stat_t
+	require.NoError(t, unix.Stat(want, &parent))
+	for _, opened := range probe.opens {
+		require.Equal(t, want, opened.directory)
+		require.Equal(t, uint64(parent.Dev), opened.device)
+		require.Equal(t, uint32(unix.S_IFREG), opened.mode&unix.S_IFMT)
+		if opened.anonymous {
+			require.Zero(t, opened.links)
+		} else {
+			directory, err := filepath.EvalSymlinks(filepath.Dir(opened.path))
+			require.NoError(t, err)
+			require.Equal(t, want, directory)
+		}
+		t.Logf("VACUUM actual native temp open: path=%s anonymous=%v device=%d inode=%d links=%d", opened.path, opened.anonymous, opened.device, opened.inode, opened.links)
 	}
 	var count int
 	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM vacuum_fixture`).Scan(&count))
@@ -183,6 +238,12 @@ func TestCompactContextInterruptsInFlightVacuumAndRestoresDirectory(t *testing.T
 	t.Cleanup(join)
 	select {
 	case <-probe.entered:
+	case early := <-done:
+		joinOnce.Do(func() { cancel(); unblock(); result = early })
+		probe.mu.Lock()
+		observed, observerErr := append([]vacuumObservedOpen(nil), probe.opens...), probe.err
+		probe.mu.Unlock()
+		t.Fatalf("VACUUM ended before a verified physical temporary open: result=%v observer=%v opens=%+v", early, observerErr, observed)
 	case <-time.After(10 * time.Second):
 		t.Fatal("VACUUM never reached its physical temporary open")
 	}
@@ -190,7 +251,7 @@ func TestCompactContextInterruptsInFlightVacuumAndRestoresDirectory(t *testing.T
 	require.ErrorIs(t, result, context.Canceled)
 	probe.mu.Lock()
 	require.NoError(t, probe.err)
-	require.NotEmpty(t, probe.paths)
+	require.NotEmpty(t, probe.opens)
 	probe.mu.Unlock()
 	writer, err = s.writerDB.Conn(t.Context())
 	require.NoError(t, err)
@@ -211,4 +272,39 @@ func TestCompactContextInterruptsInFlightVacuumAndRestoresDirectory(t *testing.T
 	require.Equal(t, vacuumTempFixtureRows*4096, bytes)
 	require.NoError(t, reopened.db.QueryRow(`SELECT hex(payload) FROM vacuum_fixture WHERE id=1`).Scan(&payload))
 	require.Equal(t, firstPayload, payload, "canceled VACUUM retained durable survivor bytes")
+}
+
+func TestVacuumPhysicalProbeRequiresMatchingRegularDescriptorAndDirectory(t *testing.T) {
+	directory, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	path := filepath.Join(directory, "etilqs_probe")
+	file, err := os.Create(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, file.Close()) })
+	observed, recognized, err := inspectVacuumNativeOpen(int32(file.Fd()), path, 0, directory)
+	require.NoError(t, err)
+	require.True(t, recognized)
+	require.False(t, observed.anonymous)
+	require.Equal(t, directory, observed.directory)
+	var actual unix.Stat_t
+	require.NoError(t, unix.Fstat(int(file.Fd()), &actual))
+	require.Equal(t, uint64(actual.Dev), observed.device)
+	require.Equal(t, uint64(actual.Ino), observed.inode)
+	wrong, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	_, recognized, err = inspectVacuumNativeOpen(int32(file.Fd()), path, 0, wrong)
+	require.True(t, recognized)
+	require.ErrorContains(t, err, "temporary open directory")
+	parent, err := os.Open(directory)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, parent.Close()) })
+	_, recognized, err = inspectVacuumNativeOpen(int32(parent.Fd()), path, 0, directory)
+	require.True(t, recognized)
+	require.ErrorContains(t, err, "not a regular file")
+	_, recognized, err = inspectVacuumNativeOpen(-1, path, 0, directory)
+	require.True(t, recognized)
+	require.Error(t, err, "invalid actual descriptor cannot become placement evidence")
+	_, recognized, err = inspectVacuumNativeOpen(int32(file.Fd()), filepath.Join(directory, "ordinary.sqlite"), 0, directory)
+	require.NoError(t, err)
+	require.False(t, recognized, "an unrelated regular open is not VACUUM temporary evidence")
 }
