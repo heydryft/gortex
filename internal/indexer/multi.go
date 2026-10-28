@@ -3059,7 +3059,7 @@ func (mi *MultiIndexer) ReconcileRepoCtx(ctx context.Context, entry config.RepoE
 		var collision *PrefixCollisionError
 		if errors.As(ownershipErr, &collision) {
 			mi.logCollision(collision)
-			return nil, nil // Typed warmup skip is a separate follow-up slice.
+			return nil, repositoryCollisionSkip(ownershipErr)
 		}
 		return nil, ownershipErr
 	}
@@ -3074,7 +3074,8 @@ func (mi *MultiIndexer) ReconcileRepoCtx(ctx context.Context, entry config.RepoE
 	// already pinned by resolveTrackPrefix, so the fallback reproduces
 	// the same prefix.
 	if len(priorMtimes) == 0 {
-		return mi.TrackRepoCtx(ctx, entry)
+		result, err := mi.TrackRepoCtx(ctx, entry)
+		return result, repositoryCollisionSkip(err)
 	}
 
 	// Prefix unconditionally, as TrackRepoCtx does — see the note there.
@@ -3112,7 +3113,7 @@ func (mi *MultiIndexer) ReconcileRepoCtx(ctx context.Context, entry config.RepoE
 			var collision *PrefixCollisionError
 			if errors.As(ownershipErr, &collision) {
 				mi.logCollision(collision)
-				return nil // Typed skip propagation follows in the warmup slice.
+				return repositoryCollisionSkip(ownershipErr)
 			}
 			return ownershipErr
 		}
@@ -3121,7 +3122,7 @@ func (mi *MultiIndexer) ReconcileRepoCtx(ctx context.Context, entry config.RepoE
 		}
 		if collision := checkConfigured(prefix, absPath); collision != nil {
 			mi.logCollision(collision)
-			return nil
+			return repositoryCollisionSkip(collision)
 		}
 		topologyChanged = true
 

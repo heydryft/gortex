@@ -69,6 +69,11 @@ type RepoLoad struct {
 	State  RepoLoadState `json:"state"`
 	// Reason explains a failed or missing repository.
 	Reason string `json:"reason,omitempty"`
+	// Collision identity is captured by the loading operation, not restatted
+	// on a probe/read path. Unknown is distinct from a missing owner.
+	ErrorCode  string `json:"error_code,omitempty"`
+	OwnerPath  string `json:"owner_path,omitempty"`
+	OwnerState string `json:"owner_state,omitempty"`
 	// Since is when the repository entered State.
 	Since time.Time `json:"since"`
 
@@ -374,6 +379,19 @@ func (mi *MultiIndexer) FinishRepoLoad(path string, jobErr error) {
 		return
 	}
 	rec := snap.records[i]
+	var collision *PrefixCollisionError
+	if errors.As(jobErr, &collision) {
+		mi.setRepoLoad(root, func(rec *RepoLoad) bool {
+			if !rec.State.Loading() {
+				return false
+			}
+			rec.State, rec.Reason, rec.Since = RepoLoadFailed, "prefix_collision: "+collision.Error(), time.Now()
+			rec.Prefix, rec.ErrorCode = collision.Prefix, "prefix_collision"
+			rec.OwnerPath, rec.OwnerState = collision.ExistingPath, collision.OwnerState
+			return true
+		})
+		return
+	}
 	// The job may have found the repository registered under another spelling
 	// of the same directory, which is a success the registration hook could
 	// not attribute to this record.
@@ -473,6 +491,7 @@ func (mi *MultiIndexer) markRepoRegistered(prefix, root string) {
 		listeners = slices.Clone(mi.repoLoads.listeners)
 		if i, ok := newRepoLoadSnapshot(records).find(root); ok {
 			records[i].State, records[i].Reason, records[i].Since = RepoLoadReady, "", now
+			records[i].ErrorCode, records[i].OwnerPath, records[i].OwnerState = "", "", ""
 			if registered.canonicalKey != "" {
 				records[i].canonicalKey = registered.canonicalKey
 			}
