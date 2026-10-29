@@ -79,6 +79,7 @@ func TestWatcherNativeDuplicateDispositionRequiresActualEarlyReturn(t *testing.T
 	for _, name := range []string{"native_duplicate", "receipt_checked", "changed_bytes"} {
 		t.Run(name, func(t *testing.T) {
 			root, idx, w := inertTestWatcher(t, "main.go", "package p\nfunc Stable() {}\n")
+			w.degradedNoFsnotify = true // this direct-call fixture never starts the native loop
 			t.Cleanup(func() { require.NoError(t, w.Stop()) })
 			path := filepath.Join(root, "main.go")
 			if name == "changed_bytes" {
