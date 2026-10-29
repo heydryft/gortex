@@ -52,8 +52,25 @@ type canonicalPatchLaps struct {
 	controlKind                      canonicalPatchLap
 	attemptStarted, attemptFinished  time.Time
 	invalid                          bool
+	nativeMtimeDuplicate             bool      // observed early return before the executor
 	origin, enqueued                 time.Time // immutable original admission identity, for attempt logs
 	ticket                           uint64
+}
+
+// This disposition belongs only to the native mtime gate, not to a failed or
+// otherwise unobserved executor. It adds no clock read or allocation.
+func (s *PublicationStamps) recordNativeMtimeDuplicate() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if p := s.patchLaps; p != nil {
+		if p.nativeMtimeDuplicate {
+			p.invalid = true
+		}
+		p.nativeMtimeDuplicate = true
+	}
 }
 
 func (p *PublicationPhaseRecord) newCanonicalPatchStamps() *PublicationStamps {

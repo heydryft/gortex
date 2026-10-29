@@ -2841,6 +2841,7 @@ func (w *Watcher) patchGraphWithReceiptStateRawModern(
 	// startup replay already checked the persisted receipt, so it bypasses this
 	// cheap in-memory mtime test and forces the exact observed path.
 	if kind == ChangeModified && !receiptChecked && idx.fileMtimeMatches(path) {
+		stamps.recordNativeMtimeDuplicate()
 		return nil
 	}
 

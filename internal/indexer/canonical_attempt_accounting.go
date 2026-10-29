@@ -15,6 +15,7 @@ type canonicalAttemptEvidence struct {
 	laps                                                             [canonicalPatchLapCount]canonicalLapEvidence
 	startNS, endNS                                                   int64
 	observed, invalid                                                bool
+	nativeMtimeDuplicate                                             bool
 	executorStart, executorEnd, derivedStart, derivedEnd             int64
 	hasExecutorStart, hasExecutorEnd, hasDerivedStart, hasDerivedEnd bool
 }
@@ -23,7 +24,7 @@ type canonicalAttemptEvidence struct {
 // exposed early snapshot. Caller holds the collector lock.
 func (s *PublicationStamps) freezeAttemptEvidence(origin time.Time) canonicalAttemptEvidence {
 	p := s.patchLaps
-	out := canonicalAttemptEvidence{observed: p.controlObserved && p.controlFinished, invalid: p.invalid || p.active != 0}
+	out := canonicalAttemptEvidence{observed: p.controlObserved && p.controlFinished, invalid: p.invalid || p.active != 0, nativeMtimeDuplicate: p.nativeMtimeDuplicate}
 	if !p.attemptStarted.IsZero() {
 		out.startNS = p.attemptStarted.Sub(origin).Nanoseconds()
 	}
@@ -114,11 +115,24 @@ func (w canonicalAttemptWindow) evaluateAccounting() canonicalAttemptProjection 
 	invalid := p.invalid || p.startNS != w.startNS || p.endNS != w.endNS || w.startNS < 0 || w.endNS < w.startNS
 	wall := w.endNS - w.startNS
 	missing := !p.hasExecutorStart || !p.hasExecutorEnd || !p.hasDerivedStart || !p.hasDerivedEnd
+	if p.nativeMtimeDuplicate {
+		missing = false
+		// A native duplicate never entered the executor. Any execution evidence
+		// contradicts that disposition; it cannot be reclassified as zero work.
+		invalid = invalid || p.hasExecutorStart || p.hasExecutorEnd || p.hasDerivedStart || p.hasDerivedEnd
+	}
 	if p.hasExecutorStart && (p.executorStart < w.startNS || p.executorStart > w.endNS) || p.hasExecutorEnd && (p.executorEnd < p.executorStart || p.executorEnd > w.endNS) {
 		invalid = true
 	}
 	for i, v := range p.laps {
 		kind := canonicalPatchLap(i)
+		if p.nativeMtimeDuplicate && (kind < canonicalDeepLapCount || kind == patchExecutorControl) {
+			if v != (canonicalLapEvidence{}) {
+				invalid = true
+			}
+			out.states[i] = "not_applicable"
+			continue
+		}
 		if requiredAttemptLap(kind) && (v.begun == 0 || v.begun != v.done || v.incomplete) {
 			missing = true
 		}
@@ -177,22 +191,24 @@ func (w canonicalAttemptWindow) evaluateAccounting() canonicalAttemptProjection 
 // backoff/discarded attempts, receipt lifetime, ACK or whole-edit background.
 // Even an observed complete partition is not the actual100-edit/5% acceptance.
 type EditPatchAccounting struct {
-	AttemptTicket      uint64              `json:"attempt_ticket"`
-	AttemptRetry       int                 `json:"attempt_retry"`
-	Scope              string              `json:"scope"`
-	BackgroundCoverage string              `json:"background_coverage"`
-	SumState           string              `json:"sum_state"`
-	PartitionComplete  bool                `json:"observed_partition_complete"`
-	PhasesMS           map[string]*float64 `json:"phases_ms"`
-	PhaseStates        map[string]string   `json:"phase_states"`
-	SubtotalMS         *float64            `json:"observed_subtotal_ms"`
-	UnattributedMS     *float64            `json:"unattributed_ms"`
+	ExecutionDisposition string              `json:"execution_disposition"`
+	AttemptTicket        uint64              `json:"attempt_ticket"`
+	AttemptRetry         int                 `json:"attempt_retry"`
+	Scope                string              `json:"scope"`
+	BackgroundCoverage   string              `json:"background_coverage"`
+	SumState             string              `json:"sum_state"`
+	PartitionComplete    bool                `json:"observed_partition_complete"`
+	PhasesMS             map[string]*float64 `json:"phases_ms"`
+	PhaseStates          map[string]string   `json:"phase_states"`
+	SubtotalMS           *float64            `json:"observed_subtotal_ms"`
+	UnattributedMS       *float64            `json:"unattributed_ms"`
 }
 
 func (w canonicalAttemptWindow) projectAccounting() *EditPatchAccounting {
 	p := w.evaluateAccounting()
 	out := &EditPatchAccounting{AttemptTicket: w.ticket, AttemptRetry: w.retry, Scope: "accepted_winning_physical_attempt", BackgroundCoverage: "not_established", SumState: p.state, PartitionComplete: p.complete,
 		PhasesMS: make(map[string]*float64, canonicalPatchLapCount), PhaseStates: make(map[string]string, canonicalPatchLapCount)}
+	out.ExecutionDisposition = w.executionDisposition()
 	for i, name := range canonicalAttemptLapNames {
 		out.PhasesMS[name], out.PhaseStates[name] = nil, p.states[i]
 		if p.states[i] == "measured" {
@@ -211,6 +227,7 @@ func (w canonicalAttemptWindow) projectAccounting() *EditPatchAccounting {
 func (w canonicalAttemptWindow) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 	p := w.evaluateAccounting()
 	enc.AddString("scope", "accepted_winning_physical_attempt")
+	enc.AddString("execution_disposition", w.executionDisposition())
 	enc.AddUint64("attempt_ticket", w.ticket)
 	enc.AddInt("attempt_retry", w.retry)
 	enc.AddString("background_coverage", "not_established")
@@ -227,4 +244,11 @@ func (w canonicalAttemptWindow) MarshalLogObject(enc zapcore.ObjectEncoder) erro
 		enc.AddFloat64("unattributed_ms", float64(w.endNS-w.startNS-p.sumNS)/1e6)
 	}
 	return nil
+}
+
+func (w canonicalAttemptWindow) executionDisposition() string {
+	if w.accounting.nativeMtimeDuplicate {
+		return "native_mtime_duplicate"
+	}
+	return "not_observed"
 }

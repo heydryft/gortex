@@ -28,6 +28,14 @@ queueing and discarded attempts are not part of this smaller winning-P wall.
 Its `background_coverage` remains `not_established`: it does not establish full
 per-edit background, ACK, actual100-edit or5%/performance acceptance.
 
+`execution_disposition: native_mtime_duplicate` records the actual native
+watcher receipt-match return before executor entry. Only that observed branch
+can mark its unexecuted deep and executor-control laps `not_applicable`, with
+null durations. Contradictory execution evidence is invalid; an unknown branch
+still requires the requested deep evidence. A complete partition of this small
+no-op P does not measure the earlier graph publisher. Independent read-assisted
+publication R remains non-additive, and its missing deep coverage stays missing.
+
 ## Duration evidence
 
 `phases_ms` always lists these keys for a found mutation receipt:
