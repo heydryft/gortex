@@ -321,6 +321,8 @@ func checkEditProbeAccounting(status map[string]any, receipt string) editProbeAc
 // Receipt terminality can precede the actual serving return. Only the immutable
 // late window proves that missing deep laps cannot arrive. A complete P with
 // absent B must still wait: background publication follows physical publication.
+// An explicit native duplicate is terminal failed deep coverage even when its
+// own smaller no-executor P partition is complete.
 func editProbeImmutablePartialPhysical(physical, publication map[string]any, applied uint64) bool {
 	if _, err := editProbeNS(physical["patch_wall_ms"]); err != nil || physical["clock"] != "monotonic" || publication["clock"] != "monotonic" || publication["terminal"] != true {
 		return false
@@ -332,11 +334,30 @@ func editProbeImmutablePartialPhysical(physical, publication map[string]any, app
 	}
 	accounting, _ := physical["patch_accounting"].(map[string]any)
 	owner, err := strconvEditProbeUint(accounting["attempt_ticket"])
-	_, retryErr := strconvEditProbeUint(accounting["attempt_retry"])
-	if err != nil || owner != applied || retryErr != nil || accounting["scope"] != "accepted_winning_physical_attempt" || accounting["observed_partition_complete"] != false {
+	retry, retryErr := strconvEditProbeUint(accounting["attempt_retry"])
+	if err != nil || owner != applied || retryErr != nil || accounting["scope"] != "accepted_winning_physical_attempt" {
 		return false
 	}
-	return accounting["sum_state"] == "missing_laps" || accounting["sum_state"] == "invalid_order"
+	if accounting["observed_partition_complete"] == false {
+		return accounting["sum_state"] == "missing_laps" || accounting["sum_state"] == "invalid_order"
+	}
+	if accounting["observed_partition_complete"] != true || accounting["execution_disposition"] != "native_mtime_duplicate" || accounting["sum_state"] != "partial" || retry != 0 {
+		return false
+	}
+	phases, _ := accounting["phases_ms"].(map[string]any)
+	states, _ := accounting["phase_states"].(map[string]any)
+	for _, name := range []string{"gate_wait", "patch_parse", "apply", "search_lap", "resolve", "mtimes", "derived", "patch_analysis", "executor_control"} {
+		if phases[name] != nil || states[name] != "not_applicable" {
+			return false
+		}
+	}
+	for _, name := range []string{"attempt_setup", "patch_inspection", "attempt_finalize", "cohort_admission", "lane_wait"} {
+		if phases[name] == nil || states[name] != "measured" {
+			return false
+		}
+	}
+	window, err := checkEditProbeWindow(physical["patch_wall_ms"], phases)
+	return err == nil && window.ResidualNS == 0
 }
 
 func editProbeFinished(graphTerminal, allCorrect, requireAccounting bool, accounting editProbeAccounting) bool {

@@ -177,3 +177,59 @@ func TestEditProbeWaitsForLatePhysicalReturnButStopsImmutableMissingLaps(t *test
 		})
 	}
 }
+
+func TestEditProbeObservedDuplicateStopsAsFailedDeepCoverage(t *testing.T) {
+	fixture := func() map[string]any {
+		body := editProbeAccountingFixture()
+		winner := body["coalesced_publication"].(map[string]any)
+		pub := winner["publication_phases"].(map[string]any)
+		pub["clock"], pub["terminal"] = "monotonic", true
+		physical := winner["timings"].(map[string]any)["phase_timing"].(map[string]any)
+		physical["clock"], physical["patch_wall_ms"] = "monotonic", json.Number("5")
+		a := physical["patch_accounting"].(map[string]any)
+		a["scope"], a["sum_state"], a["execution_disposition"] = "accepted_winning_physical_attempt", "partial", "native_mtime_duplicate"
+		phases, states := a["phases_ms"].(map[string]any), a["phase_states"].(map[string]any)
+		for _, name := range []string{"gate_wait", "patch_parse", "apply", "search_lap", "resolve", "mtimes", "derived", "patch_analysis", "executor_control"} {
+			phases[name], states[name] = nil, "not_applicable"
+		}
+		delete(body, "requested_background")
+		return body
+	}
+	body := fixture()
+	got := checkEditProbeAccounting(body, "receipt-a")
+	if got.State != "terminal_partial_physical" || len(got.Reasons) == 0 || !editProbeFinished(true, true, true, got) {
+		t.Fatalf("observed no-op must terminate with failed deep coverage: %+v", got)
+	}
+	for _, bad := range []string{"early", "disposition", "deep_value", "deep_state", "control", "gap", "retry", "owner", "receipt"} {
+		t.Run(bad, func(t *testing.T) {
+			body := fixture()
+			winner := body["coalesced_publication"].(map[string]any)
+			physical := winner["timings"].(map[string]any)["phase_timing"].(map[string]any)
+			a := physical["patch_accounting"].(map[string]any)
+			switch bad {
+			case "early":
+				physical["patch_wall_ms"] = nil
+			case "disposition":
+				delete(a, "execution_disposition")
+			case "deep_value":
+				a["phases_ms"].(map[string]any)["apply"] = json.Number("0")
+			case "deep_state":
+				a["phase_states"].(map[string]any)["apply"] = "not_observed"
+			case "control":
+				a["phase_states"].(map[string]any)["attempt_finalize"] = "not_observed"
+			case "gap":
+				physical["patch_wall_ms"] = json.Number("6")
+			case "retry":
+				a["attempt_retry"] = json.Number("1")
+			case "owner":
+				winner["applied_generation"] = json.Number("3")
+			case "receipt":
+				body["receipt"] = "foreign"
+			}
+			got := checkEditProbeAccounting(body, "receipt-a")
+			if got.State == "terminal_partial_physical" || got.State == "observed_single_window_checks_pass" || editProbeFinished(true, true, true, got) {
+				t.Fatalf("unproven no-op evidence terminated collection: %+v", got)
+			}
+		})
+	}
+}
